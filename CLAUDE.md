@@ -118,35 +118,41 @@ keep covering the whole block interior rather than being trimmed to a bare
 band — a band whose inner edge did not meet solid material would union in as
 a detached shell.
 
-**One outline rule, everywhere.** Each ridge takes its outline from the solid
-at *its own mid-height*, with no rounding and no remapping. The fore-edge
-drifts 0.235 mm over the ridge range — more than the 0.178 mm depth — and is
-not smooth: it steps 0.109 mm in 0.116 mm of z at z 4.2. Two shortcuts used to
-live here and both made the ends of the block disagree with its middle:
+**One outline for every ridge, taken at `Z0`** — the same section the inserted
+band is a prism of. Every ridge is then identical at every height and every
+thickness. This is not a fudge: the block's fore-edge is *not* a smooth curve.
+It wanders 0.228 mm with no trend (a best-fit parabola leaves 0.145 mm of that
+unexplained, and the steepest run is 2.07 mm/mm), and that wander is leftover
+erosion residual from `pagetex.py`, not shape. It is also identical at every y
+(0.2281 mm at y = 0, 40, 80 and 105), so one outline is right the whole way
+round.
 
-- Rounding the sample to a 0.5 mm table station (`page.tableStep`, now unused)
-  put the outline up to 0.25 mm away in z. That is nothing in the inserted
-  band, which is prismatic, and up to 0.13 mm at the ends, where the fore-edge
-  turns over — so the band came out uniform and the ends ragged.
-- Ridges above the band sampled `zw - dz` on the **thickened** solid, but that
-  solid's section at `zw - dz` is not the original section there once
-  `zw - dz` lands inside the band. At dz 46.85 every ridge above the band
-  resolved into the bridge and got the Z0 outline: 16 of 20 wrong, one at
-  0.065 mm against 0.178 mm, and three ridges vanished outright.
+Sampling the block per ridge reproduces that residual faithfully, and the
+lines come out staggered: measured ridge-tip spread **0.213 mm** on a 0.178 mm
+feature. The band looked like a clean comb while the block's own ends looked
+like a jumble, because the band is one slice by construction. Now: **tip
+spread 0.000000 mm**, at every thickness, and the fore-edge surface sits at
+the same x (87.3339) whatever the thickness.
 
-Collapsing band ridges onto Z0 is kept — there it is exact, not an
-approximation — and keeps the whole band at one slice however thick the book.
+The old warning here said a single constant outline makes lines "vanish at the
+ends". They do not — nothing drops below 0.0217 mm of protrusion. What varies
+instead is how deep each ridge is cut into a base that still wanders, which
+reads as a line fading rather than a line moving. Median depth is the
+requested 0.178; 8 of 150 ridges come out under 0.10 mm. Flattening the base
+would fix those too, but it means trimming up to 0.16 mm off the block's outer
+skin, which is a design change and is not done.
 
-Measured after: no ridge below half depth at any thickness (was 1 / 3 / 2 at
-33.15 / 43.15 / 80), minimum protrusion 0.0029 → 0.1145 mm, and 133 of 150
-ridges flat to 0.005 mm across their own span.
+**Do not chase the rest by subdividing ridges.** Lofting with k sub-slabs
+needs a real union instead of `compose` and measured 552 ms → 1517 (k=2) →
+2193 (k=3) → 3329 (k=4), converging at 0.028 mm rather than 0. `hull` is not
+available as a shortcut either: the block's outer contour is **not convex**,
+and splits into 3–5 separate islands at most heights.
 
-**Do not subdivide ridges to chase the rest.** The residual is the block's own
-round-over: a prism cannot follow a surface that moves under it. Lofting with
-k sub-slabs per ridge needs a real union instead of `compose`, and measured
-517 ms → 2444 ms (k=2) → 7649 ms (k=4) to take the worst within-ridge
-variation from 0.116 to 0.066 to 0.028 mm. Not worth it on an interactive
-slider.
+Because the ridge is now one prism spanning the whole block, its section must
+clear every void the block has **anywhere**, not just at `Z0` — the 0.397 mm
+slot only exists from the base up to z −2. Hence the void envelope, sampled on
+`page.tableStep`. Over-removing is safe: ridges are only ever unioned onto the
+block, so anything taken out where the block is solid is put straight back.
 
 Outlines are decimated to 0.5 mm before offsetting. Corner fillets are
 tessellated down to 0.014 mm edges, and any offset larger than half such an

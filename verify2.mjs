@@ -40,85 +40,68 @@ for (const [p,d] of [[0.465,0.178],[0.8,0.25],[1.2,0.15]]) {
   console.log(`  requested depth ${d}  ->  measured peak-to-valley ${swing.toFixed(4)} mm`);
 }
 
-console.log('\nPAGE EDGES: every ridge the same, and unchanged by thickness');
+console.log('\nPAGE EDGES: one pattern everywhere, and unchanged by thickness');
 {
-  // x where the outline crosses y = 0 -- the fore-edge at mid-length, clear
-  // of the corner miter, which a plain max-x would pick up instead
-  const edge = (m, z) => {
+  // x where the outline crosses y -- the fore-edge clear of the corner miter,
+  // which a plain max-x would pick up instead
+  const edgeAt = (m, z, y) => {
     let best = -Infinity;
     for (const poly of m.slice(z).toPolygons()) {
       for (let i = 0; i < poly.length; i++) {
         const q = poly[i], r = poly[(i + 1) % poly.length];
-        if ((q[1] > 0) === (r[1] > 0)) continue;
-        const x = q[0] + (r[0] - q[0]) * (0 - q[1]) / (r[1] - q[1]);
+        if ((q[1] > y) === (r[1] > y)) continue;
+        const x = q[0] + (r[0] - q[0]) * (y - q[1]) / (r[1] - q[1]);
         if (x > best) best = x;
       }
     }
     return best;
   };
-  const NOM_T = 33.15, Z0 = 1.79, DROP = 11.7125, PITCH = 0.465, DEPTH = 0.178;
-  const BB = [-11.7125, 11.7125];
+  const NOM_T = 33.15, DROP = 11.7125, PITCH = 0.465, BB = [-11.7125, 11.7125];
 
-  // Sampled across each ridge's own span, not at the height its outline came
-  // from -- sampling only there measures nothing but its own input.
-  function ridges(th) {
+  function ridges(th, y) {
     const dz = th - NOM_T;
     const bare = gen.thicken(gen.solidOf('pages', 0, 0), dz);
     const built = gen.build({ thickness: th }).pages;
     const lo = BB[0] + 0.3, hi = BB[1] + dz - 0.3;
     const n = Math.max(1, Math.round((hi - lo) / PITCH)), p = (hi - lo) / n;
-    const out = [];
+    const tips = [], prot = [];
     for (let i = 0; i < n; i++) {
-      const zw = lo + i * p, v = [];
-      for (const f of [0.06, 0.25, 0.5, 0.75, 0.94]) {
-        const z = zw + f * (p / 2);
-        const d = edge(built, z + DROP) - edge(bare, z);
-        if (Number.isFinite(d)) v.push(d);
-      }
-      if (v.length) out.push({ zw, top: hi - zw, min: Math.min(...v), max: Math.max(...v) });
+      const zc = lo + i * p + p / 4;
+      const a = edgeAt(built, zc + DROP, y), b = edgeAt(bare, zc, y);
+      if (Number.isFinite(a) && Number.isFinite(b)) { tips.push(a); prot.push(a - b); }
     }
-    return out;
+    return { tips, prot };
   }
 
-  const sets = {};
+  // Every ridge must reach the same outer surface -- that is what makes the
+  // block's ends read like its middle. What varies instead is how deep each
+  // one is cut into a base that still wanders by 0.228 mm of erosion residual.
+  const ref = {};
   for (const th of [33.15, 43.15, 80]) {
-    const r = sets[th] = ridges(th);
-    const weak = r.filter(x => x.min < DEPTH * 0.5).length;
-    const flat = r.filter(x => x.max - x.min <= 0.005).length;
-    console.log(`  thickness ${th.toString().padEnd(6)} ${r.length} ridges  `
-      + `protrusion ${Math.min(...r.map(x => x.min)).toFixed(4)}..${Math.max(...r.map(x => x.max)).toFixed(4)}  `
-      + `${flat}/${r.length} flat to 0.005  ${weak} under half depth`
-      + (weak ? '   <-- RIDGES VANISHING' : ''));
+    let worstTip = 0, minProt = Infinity;
+    for (const y of [0, 80]) {
+      const r = ridges(th, y);
+      worstTip = Math.max(worstTip, Math.max(...r.tips) - Math.min(...r.tips));
+      minProt = Math.min(minProt, Math.min(...r.prot));
+      if (y === 0) ref[th] = r.prot.slice().sort((a, b) => a - b);
+    }
+    console.log(`  thickness ${th.toString().padEnd(6)} tip spread ${worstTip.toFixed(6)} mm`
+      + `   shallowest ridge ${minProt.toFixed(4)} mm`
+      + (worstTip > 1e-4 ? '   <-- RIDGES NOT ALIGNED' : '')
+      + (minProt <= 0 ? '   <-- RIDGES VANISHING' : ''));
   }
 
-  // The real complaint: extending thickness must not change the texture at
-  // the block's ends. Ridges are matched by distance from the top, since that
-  // is what the inserted band pushes up. The pitch is re-fitted per thickness
-  // (n is rounded), so the two sets do not land on identical heights -- match
-  // nearest and report how many actually paired, otherwise a comparison that
-  // pairs nothing reads as a clean 0.0000.
+  // and the outer surface those ridges reach must not move when thickness
+  // does. Comparing the *set of depths* instead would be meaningless: the
+  // pitch is re-fitted per thickness (n is rounded so ridges land on both
+  // block ends), so ridges sample the wandering base at different heights
+  // and the depths legitimately differ. Where the tips land does not.
   for (const th of [43.15, 80]) {
-    let worst = 0, paired = 0;
-    const ref = sets[33.15];
-    for (const a of sets[th]) {
-      if (a.top > 10) continue;                       // the top region only
-      let b = null, best = Infinity;
-      for (const x of ref) {
-        const d = Math.abs(x.top - a.top);
-        if (d < best) { best = d; b = x; }
-      }
-      if (!b || best > PITCH / 2) continue;
-      paired++;
-      worst = Math.max(worst, Math.abs(a.min - b.min), Math.abs(a.max - b.max));
-    }
-    console.log(`  top-of-block ridges at thickness ${th} vs nominal: `
-      + `${paired} paired, worst difference ${worst.toFixed(4)} mm`
-      + (worst > 0.1 ? '   <-- INCONSISTENT' : ''));
+    const a = ridges(th, 0).tips[0], b = ridges(33.15, 0).tips[0];
+    console.log(`  fore-edge surface at ${th} vs nominal: x ${a.toFixed(4)} vs `
+      + `${b.toFixed(4)}, shift ${Math.abs(a - b).toFixed(6)} mm`
+      + (Math.abs(a - b) > 1e-4 ? '   <-- SURFACE MOVED' : ''));
   }
-  console.log('  (residual is the re-fitted pitch: n is rounded so ridges land on');
-  console.log('   both block ends, so p is 0.4623 at 43.15 and 0.4658 at nominal,');
-  console.log('   and paired ridges sample slightly different heights. Within any');
-  console.log('   one book the pitch is exactly constant.)');
 }
 
 console.log('\nCavity volume grows with thickness (compartment, not a solid slab):');

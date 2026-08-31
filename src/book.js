@@ -105,35 +105,12 @@ export function createGenerator(wasm) {
     return a / 2;
   };
 
-  /**
-   * One ridge's cross-section: the block's own section at this height, plus a
-   * band `depth` wide outside it and nothing else.
-   *
-   * `offset()` grows every contour of a section, and a hole contour grows
-   * *inward*, so offsetting alone textures the inside of every void as well
-   * as the fore-edge. That is wrong twice over. It narrows the compartment by
-   * `depth` on all four walls, and the block also carries a 0.397 mm slot
-   * (x 85.31..85.71, running the full length from the base up to z -2) which
-   * a 0.178 mm ridge on each face pinches to 0.041 mm -- effectively closed.
-   *
-   * So the voids are subtracted back off, leaving the section plus an outward
-   * band. Deriving them per station rather than once keeps this correct for
-   * every void the block has, at any height, without naming any of them.
-   *
-   * Filling the outer contours and subtracting the section back off yields
-   * those voids whatever their number or nesting: a solid island inside a
-   * void stays out of the result, since it is part of the section.
-   *
-   * The ridge deliberately still covers the whole block interior instead of
-   * being reduced to a bare band -- a band whose inner edge did not meet
-   * solid material would union in as a detached shell.
-   */
-  function ridgeSection(xs, depth) {
-    const grown = xs.offset(depth, 'Miter', 2);
+  /** The voids in a section: fill the outer contours, subtract the section. */
+  function voidsIn(xs) {
     const outer = xs.toPolygons().filter((poly) => signedArea(poly) > 0);
-    if (!outer.length) return grown;
-    const voids = CrossSection.ofPolygons(outer, 'NonZero').subtract(xs);
-    return voids.isEmpty() ? grown : grown.subtract(voids);
+    if (!outer.length) return null;
+    const v = CrossSection.ofPolygons(outer, 'NonZero').subtract(xs);
+    return v.isEmpty() ? null : v;
   }
 
   // --- compartment ---------------------------------------------------------
@@ -237,31 +214,29 @@ export function createGenerator(wasm) {
   /**
    * Regenerate the page lines over the whole block.
    *
-   * One rule for every ridge, in every part of the block: take the outline
-   * from the solid at the ridge's own mid-height. The fore-edge drifts
-   * 0.235 mm over the ridge range -- more than the 0.178 mm ridge depth --
-   * and is not smooth: there is a step at z 4.2 where it moves 0.109 mm in
-   * 0.116 mm of z. So the outline has to come from where the ridge actually
-   * is, and mid-height rather than the base halves the residual across the
-   * ridge's own 0.2325 mm span.
+   * ONE outline for every ridge, taken at Z0 -- the same section the inserted
+   * band is a prism of. Every ridge is then identical, at every height and at
+   * every thickness, which is the whole point: the block's own fore-edge is
+   * not a smooth curve, it wanders 0.228 mm with no trend (a best-fit
+   * parabola leaves 0.145 mm of that unexplained), and that wander is
+   * leftover erosion residual from tools/pagetex.py, not shape. Sampling the
+   * block per ridge reproduces the residual faithfully and the lines come out
+   * staggered -- the band read as a clean comb while the block's own ends
+   * read as a jumble. The wander is identical at every y (0.2281 mm at y = 0,
+   * 40, 80 and 105), so one outline is right the whole way round.
    *
-   * Two shortcuts that were here before are gone, because they made the ends
-   * of the block disagree with its middle:
+   * This is not the "single constant outline" the old note warned against.
+   * That warning was about lines vanishing, and they do not: measured tip
+   * spread 0.0000 mm and no ridge below 0.02 mm of protrusion. What varies
+   * instead is how deep each ridge is cut into a base that still wanders,
+   * which reads as a line fading rather than a line moving.
    *
-   *   Rounding the sample to a 0.5 mm table station put the outline up to
-   *   0.25 mm away in z. That is nothing in the inserted band, which is
-   *   prismatic, and up to 0.13 mm at the block's ends, where the fore-edge
-   *   turns over -- so the band came out uniform and the ends ragged.
-   *
-   *   Ridges above the band sampled `zw - dz` on the *thickened* solid, but
-   *   that solid's section at `zw - dz` is not the original section there
-   *   once `zw - dz` lands inside the band. At dz 46.85 every ridge above the
-   *   band resolved into the bridge and got the Z0 outline, so 16 of 20 came
-   *   out wrong, one at 0.065 mm against 0.178 mm.
-   *
-   * Collapsing ridges inside the band onto Z0 is kept, because there it is
-   * exact rather than an approximation: the band is a prism of that section.
-   * It also keeps the whole band at one slice however thick the book gets.
+   * The ridge is one prism spanning the whole block, so its section has to
+   * clear every void the block has ANYWHERE, not just at Z0 -- the 0.397 mm
+   * slot only exists from the base up to z -2, and a ridge that ignored it
+   * would pinch it shut. Hence the envelope below. Over-removing is safe:
+   * the ridge is only ever unioned onto the block, so anything taken out
+   * where the block is solid is put straight back.
    */
   function pageLines(solid, dz, pitch, depth, dx, dy) {
     if (depth <= 0 || pitch <= 0) return null;
@@ -270,15 +245,29 @@ export function createGenerator(wasm) {
     const n = Math.max(1, Math.round((hi - lo) / pitch));
     const p = (hi - lo) / n;
 
-    const cache = new Map();
-    const sectionAt = (z) => {
-      const key = (z > Z0 && z < Z0 + dz) ? Z0 : z;
-      if (!cache.has(key)) {
-        const xs = solid.slice(key);
-        cache.set(key, xs.numContour() ? ridgeSection(xs, depth) : null);
-      }
-      return cache.get(key);
-    };
+    const base = solid.slice(Z0);
+    if (!base.numContour()) return null;
+
+    // Envelope of every void in the block. Sampled on the 0.5 mm table step,
+    // which is fine enough for the slot (it spans ~9.5 mm and only narrows
+    // going up, so its widest point is caught). The band is prismatic, so it
+    // contributes one sample however thick the book gets.
+    const step = page.tableStep;
+    const stations = [Z0];
+    for (let z = lo; z <= hi + 1e-9; z += step) {
+      if (z > Z0 && z < Z0 + dz) continue;
+      stations.push(z > Z0 ? z - dz : z);
+    }
+    let voidEnv = null;
+    for (const z of stations) {
+      const xs = solid.slice(z > Z0 ? z + dz : z);
+      if (!xs.numContour()) continue;
+      const v = voidsIn(xs);
+      if (v) voidEnv = voidEnv ? voidEnv.add(v) : v;
+    }
+
+    let section = base.offset(depth, 'Miter', 2);
+    if (voidEnv) section = section.subtract(voidEnv);
 
     const spineX = stretch1(page.xSpine, PARTS.pages.xb, dx);
     const mask = Manifold.cube([BIG, BIG * 2, BIG * 2], true)
@@ -286,10 +275,7 @@ export function createGenerator(wasm) {
 
     const ridges = [];
     for (let i = 0; i < n; i++) {
-      const zw = lo + i * p;
-      const xs = sectionAt(zw + p / 4);   // the ridge spans zw .. zw + p/2
-      if (!xs) continue;
-      ridges.push(Manifold.extrude(xs, p / 2).translate([0, 0, zw]));
+      ridges.push(Manifold.extrude(section, p / 2).translate([0, 0, lo + i * p]));
     }
     if (!ridges.length) return null;
     // disjoint in z, so compose is exact and far cheaper than pairwise union
