@@ -1,0 +1,149 @@
+# CLAUDE.md
+
+Parametric configurator for a hidden book storage box. Browser app: adjust
+size and title, see it live, download printable geometry.
+
+Base geometry came from a Bambu Studio 3MF by "Truitt" (MakerWorld, Standard
+Digital File License). This is a local-use rebuild — **do not redistribute the
+generated output or the mesh data.**
+
+## Commands
+
+```bash
+npm install            # three, manifold-3d, opentype.js (also vendored)
+node serve.mjs         # http://localhost:8080 — ES modules need http, not file://
+npm test               # test.mjs + verify2.mjs, headless, no browser
+node browsertest.mjs   # real Chrome via puppeteer: boot, render, rebuild
+node dltest.mjs        # verifies .3mf / .stl downloads are well-formed
+cd tools && python3 export_data.py    # regenerate src/data.js (needs numpy)
+```
+
+`browsertest.mjs` and `dltest.mjs` default to Chrome at
+`/opt/google/chrome/chrome`. Set `CHROME_PATH` to override for your machine,
+e.g. `CHROME_PATH=/opt/pw-browsers/chromium node browsertest.mjs`.
+
+## Layout
+
+```
+index.html        UI + importmap (points at ./vendor, nothing external)
+src/app.js        viewport, controls, downloads — the ONLY file touching the DOM
+src/book.js       the generator — headless, testable, no DOM
+src/export.js     text layout, STL writer, 3MF writer (store-only ZIP)
+src/data.js       GENERATED. base meshes + constants. 159 KB
+tools/            export_data.py, pagetex.py, extract_3mf.py, stl/
+vendor/           three, manifold(+wasm), opentype, Liberation Serif
+```
+
+Keep `book.js` DOM-free. That separation is what makes every claim in the
+README a measured number rather than a guess, and it is the main reason this
+project left OpenSCAD.
+
+## Invariants — break these and the model silently goes wrong
+
+**Never use `scale()` for dimensions.** Scaling to 80% gives 1.6 mm walls
+where 2 mm was specified, shrinks hinge clearance below what a 0.4 mm nozzle
+resolves, and changes snap-fit interference. Width and length use a
+piecewise-linear *stretch* confined to each part's prismatic band, so fillets,
+hinge knuckles and snap ledges translate rigidly at original size. Bands are
+in `data.js` per part; they are derived, not hand-picked.
+
+**The shared cut plane is load-bearing.** Case and page block must both be cut
+at `Z0 = 1.790`. If they use different heights, any engaging feature pair
+falling between the two planes has one member move with DZ while its partner
+stays, and the dovetail loses engagement by exactly DZ. A shared plane makes
+that impossible. `Z0` also sits inside the spine's existing flat band
+(z −3.20 … +3.20), so the spine gains no new crease, and inside the cavity, so
+the compartment grows. Below about z = −8.5 the page block is **solid**: a cut
+there gives a 38 841 mm² bridge instead of 3 134 mm², meaning a thicker book
+with the same storage and seven times the plastic. If you move `Z0`, re-derive
+all three conditions.
+
+**Thickness increases only.** Going below nominal means removing material
+rather than inserting it, which collides the two halves. `build()` clamps it.
+
+**manifold evaluates lazily.** `build()` returns fast and does the real work on
+first access to `numTri()` / `volume()` / `getMesh()`. Any benchmark that does
+not force evaluation inside the timer is measuring nothing. This produced a
+completely wrong performance diagnosis once already.
+
+**Batch booleans, never chain.** Two chained `.subtract()` calls on the cover
+measured 4771 ms; the same two as one `Manifold.difference([solid, a, b])`
+measured 953 ms. The first cut takes the cover from 2,756 to 22,848 triangles
+and the second has to chew through that. Use `engraveAll()`.
+
+**Simplify text cross-sections.** `textTolerance` defaults to 0.01 mm.
+Without it: 138k triangles, 5.7 s. With it: 33.5k triangles, 344 ms. Engraved
+volume changes 0.06% and genus is unchanged, so only redundant tessellation is
+lost.
+
+**`Manifold.transform()` takes a column-major 4×4 (16 numbers)**, last row
+ignored. Passing 12 silently scatters geometry into space — the engraving
+added 19,000 triangles while removing exactly 0 mm³.
+
+**STL winds counter-clockwise from outside; OpenSCAD's `polyhedron()` wants
+clockwise.** Only relevant if you write mesh exporters. `export_data.py`
+asserts positive signed volume for this reason.
+
+## Page texture
+
+The designer's page lines are irregular (crest spacing 0.15–0.84 mm) and the
+fore-edge is curved in Z, so no two cross-sections of the block are identical
+and **no slab of real geometry can be tiled.** Do not try again; it was
+attempted twice.
+
+Instead the original lines are eroded away in `tools/pagetex.py` at export
+time and regenerated in `book.js` at constant pitch over the whole block, so
+the inserted band matches the rest instead of reading as a patch. Measured
+original: 0.465 mm pitch, 0.178 mm deep.
+
+The erosion min-filters each outer-skin vertex **along its own surface
+normal** — x-facing walls binned by y, y-facing walls binned by x. Binning by
+polar angle does not work: on a 175 × 231 rounded rectangle the radius varies
+~0.8 mm across one angular bin, which swamps a 0.178 mm texture and removes
+less than a third of it. Normal-axis filtering takes the residual from
+0.178 mm to 0.040 mm.
+
+Ridges pull their outline from the block at the height they sit at, not from a
+single constant outline. The fore-edge drifts 0.38 mm over the block height —
+more than twice the ridge depth — so a constant outline makes lines protrude
+at mid-height and vanish at the ends.
+
+Outlines are decimated to 0.5 mm before offsetting. Corner fillets are
+tessellated down to 0.014 mm edges, and any offset larger than half such an
+edge flips it and self-intersects the polygon.
+
+## Text
+
+Glyph outlines come from opentype.js, so X centres on the advance width and Y
+on the ink bounding box — matching the source 3MF exactly. There is no
+`baseline_k` fudge factor; if you find yourself adding one, something else is
+wrong. opentype 2.0 exports **named** bindings, no default: use
+`import * as opentype`.
+
+## Known limits
+
+- **Cover hinge zone is fixed at 22 mm** (x −88.66 … −66.66) with no prismatic
+  gap anywhere inside it, so it cannot be widened by any mesh operation. It
+  was designed around a 33.15 mm spine. Whether the cover still folds shut at
+  greater thickness depends on hinge kinematics that cannot be measured from a
+  mesh. **Untested — print the cover and case spine before committing.**
+- Build plate: original footprint is already 185.5 × 239.2 mm. Length has
+  ~11 mm of headroom on a 256 mm plate, width ~64 mm. Sliders go wider than
+  what is printable; the UI warns past 250 mm.
+- Manifold geometry is not the same as printable geometry. No test print has
+  been done.
+- Browser testing is Chrome-only, software rendering, one machine.
+- opentype.js here does no bidi or contextual shaping, so Arabic and
+  Devanagari titles will not lay out correctly.
+
+## Conventions
+
+- All units are millimetres.
+- Failures must be visible. `app.js` has `error` / `unhandledrejection`
+  handlers that write into the sidebar, plus staged boot status. An early
+  version threw a TypeError before its try block and presented as a permanent
+  "starting…" with nothing on screen. Do not reintroduce a silent path.
+- Anything added to `params()` must have a matching readout; the audit that
+  caught that bug compares every `p.*` read against the `params()` keys.
+- Prefer measuring over reasoning. There is a real browser and a real CSG
+  kernel available here; use them.

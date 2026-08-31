@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hidden Book Box — Configurator</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 fill=%27%23c8873f%27/%3E%3C/svg%3E">
+<style>
+  :root{
+    --bg:#12100e; --panel:#1b1815; --panel2:#232019; --line:#332e26;
+    --ink:#efe9df; --dim:#9c9184; --accent:#c8873f; --accent2:#7fa66a;
+    --warn:#d2694a;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    background:var(--bg); color:var(--ink);
+    font:14px/1.45 ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif;
+    display:flex; overflow:hidden;
+  }
+  #side{
+    width:340px; flex:none; background:var(--panel); border-right:1px solid var(--line);
+    display:flex; flex-direction:column; height:100vh;
+  }
+  #brand{padding:16px 18px 12px; border-bottom:1px solid var(--line)}
+  #brand h1{margin:0;font-size:16px;letter-spacing:.2px;font-weight:600}
+  #brand p{margin:4px 0 0;color:var(--dim);font-size:12px}
+  #scroll{overflow-y:auto;flex:1;padding:6px 0 20px}
+  details{border-bottom:1px solid var(--line)}
+  summary{
+    padding:11px 18px;cursor:pointer;font-weight:600;font-size:12px;
+    letter-spacing:.6px;text-transform:uppercase;color:var(--dim);
+    list-style:none;user-select:none;
+  }
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:"▸";margin-right:8px;display:inline-block;transition:.15s}
+  details[open]>summary::before{transform:rotate(90deg)}
+  details[open]>summary{color:var(--ink)}
+  .body{padding:2px 18px 16px}
+  .row{margin-bottom:13px}
+  .row label{display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px}
+  .row label b{font-weight:600;color:var(--accent);font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%;accent-color:var(--accent);height:18px}
+  input[type=text],input[type=number],select{
+    width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+    border-radius:5px;padding:7px 9px;font:inherit;font-size:13px;
+  }
+  input[type=text]:focus,select:focus{outline:none;border-color:var(--accent)}
+  .hint{color:var(--dim);font-size:11px;margin-top:5px;line-height:1.4}
+  .warn{color:var(--warn)}
+  #foot{border-top:1px solid var(--line);padding:12px 18px;background:var(--panel)}
+  button{
+    width:100%;background:var(--accent);color:#1a1206;border:0;border-radius:6px;
+    padding:10px;font:inherit;font-weight:600;cursor:pointer;margin-bottom:7px;
+  }
+  button.alt{background:var(--panel2);color:var(--ink);border:1px solid var(--line)}
+  button:disabled{opacity:.45;cursor:default}
+  #main{flex:1;position:relative;min-width:0}
+  canvas{display:block}
+  #hud{
+    position:absolute;left:14px;top:12px;font-size:11px;color:var(--dim);
+    background:rgba(18,16,14,.82);padding:8px 11px;border-radius:6px;
+    border:1px solid var(--line);font-variant-numeric:tabular-nums;pointer-events:none;
+    white-space:pre;
+  }
+  #parts{position:absolute;right:14px;top:12px;display:flex;gap:6px}
+  #parts button{width:auto;margin:0;padding:6px 12px;font-size:12px;
+    background:var(--panel2);color:var(--dim);border:1px solid var(--line)}
+  #parts button.on{background:var(--accent);color:#1a1206;border-color:var(--accent)}
+  #busy{
+    position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    background:rgba(18,16,14,.6);font-size:13px;color:var(--dim);
+  }
+  #busy.show{display:flex}
+  .err{color:var(--warn);font-size:12px;padding:0 18px 10px}
+</style>
+</head>
+<body>
+<div id="side">
+  <div id="brand">
+    <h1>Hidden Book Box</h1>
+    <p>Parametric configurator</p>
+  </div>
+  <div id="scroll">
+    <details open><summary>Size</summary><div class="body">
+      <div class="row"><label>Width <b id="vw">185.5</b></label>
+        <input type="range" id="width" min="120" max="250" step="0.5" value="185.5"></div>
+      <div class="row"><label>Length <b id="vl">239.2</b></label>
+        <input type="range" id="length" min="150" max="250" step="0.5" value="239.2"></div>
+      <div class="row"><label>Thickness <b id="vt">33.15</b></label>
+        <input type="range" id="thick" min="33.15" max="80" step="0.25" value="33.15"></div>
+      <div class="hint" id="plateWarn"></div>
+      <div class="hint">Width and length stretch only the prismatic bands, so
+        fillets, hinges and snap clearances keep their original size. Thickness
+        inserts a straight section at a shared cut plane and can only increase.</div>
+    </div></details>
+
+    <details open><summary>Title</summary><div class="body">
+      <div class="row"><label>Front line 1</label>
+        <input type="text" id="f1" value="A Treatise on"></div>
+      <div class="row"><label>Front line 2</label>
+        <input type="text" id="f2" value="The Science of Chance"></div>
+      <div class="row"><label>Spine</label>
+        <input type="text" id="sp" value="A Treatise on the Science of Chance"></div>
+      <div class="row"><label>Font</label>
+        <select id="font"></select>
+        <div class="hint">Or load a .ttf / .otf:
+          <input type="file" id="fontFile" accept=".ttf,.otf" style="margin-top:6px"></div></div>
+      <div class="row"><label>Front size <b id="vfs">12.0</b></label>
+        <input type="range" id="fsize" min="6" max="20" step="0.5" value="12"></div>
+      <div class="row"><label>Spine size <b id="vss">11.5</b></label>
+        <input type="range" id="ssize" min="6" max="16" step="0.5" value="11.5"></div>
+      <div class="row"><label>Letter spacing <b id="vtr">0.0</b></label>
+        <input type="range" id="track" min="-0.5" max="3" step="0.1" value="0"></div>
+      <div class="row"><label>Etch depth <b id="ved">1.285</b></label>
+        <input type="range" id="etch" min="0.3" max="2.5" step="0.005" value="1.285"></div>
+      <div class="hint" id="fitHint"></div>
+    </div></details>
+
+    <details><summary>Page edges</summary><div class="body">
+      <div class="row"><label>Line pitch <b id="vpp">0.465</b></label>
+        <input type="range" id="pitch" min="0.25" max="2" step="0.005" value="0.465"></div>
+      <div class="row"><label>Line depth <b id="vpd">0.178</b></label>
+        <input type="range" id="pdepth" min="0" max="0.6" step="0.002" value="0.178"></div>
+      <div class="hint">The designer's original lines were irregular
+        (0.15–0.84&nbsp;mm) and are stripped from the base mesh. These are
+        regenerated at a constant pitch over the whole block, so the inserted
+        band matches the rest. Measured original: 0.465&nbsp;mm pitch,
+        0.178&nbsp;mm deep.</div>
+    </div></details>
+  </div>
+  <div class="err" id="err"></div>
+  <div id="foot">
+    <button id="dl3mf">Download .3mf (all parts)</button>
+    <button class="alt" id="dlstl">Download .stl (visible part)</button>
+  </div>
+</div>
+
+<div id="main">
+  <div id="hud">starting…</div>
+  <div id="parts">
+    <button data-p="case" class="on">Case</button>
+    <button data-p="cover" class="on">Cover</button>
+    <button data-p="pages" class="on">Pages</button>
+  </div>
+  <div id="busy">generating…</div>
+</div>
+
+<!-- Dependencies are vendored under ./vendor so the app works offline and
+     cannot hang on a failed CDN fetch. -->
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three.module.js",
+  "three/addons/controls/OrbitControls.js": "./vendor/OrbitControls.js",
+  "manifold-3d": "./vendor/manifold.js",
+  "opentype": "./vendor/opentype.mjs"
+}}
+</script>
+<script type="module" src="./src/app.js"></script>
+</body>
+</html>

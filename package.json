@@ -1,0 +1,16 @@
+{
+  "name": "hidden-book-configurator",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "serve": "node serve.mjs",
+    "test": "node test.mjs && node verify2.mjs"
+  },
+  "dependencies": {
+    "manifold-3d": "3.5.1",
+    "opentype.js": "2.0.0",
+    "puppeteer": "^25.9.0",
+    "three": "0.169.0"
+  }
+}

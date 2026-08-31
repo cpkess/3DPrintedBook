@@ -1,0 +1,329 @@
+// app.js -- viewport, controls and export wiring.
+// All geometry lives in book.js, which has no DOM dependency so it can be
+// tested headless under Node.
+
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import ManifoldModule from 'manifold-3d';
+import * as opentype from 'opentype';
+import { createGenerator, PARTS } from './book.js';
+import { textPolygons, meshToSTL, meshesTo3MF } from './export.js';
+import { DATA } from './data.js';
+
+const $ = (id) => document.getElementById(id);
+
+// Anything that throws must end up on screen. The first version of this file
+// died in updateReadouts() before the try block and left the HUD reading
+// "starting..." forever with nothing in the UI to say why.
+function fail(where, e) {
+  console.error(where, e);
+  const box = document.getElementById('err');
+  if (box) box.textContent = `${where}: ${e && e.message ? e.message : e}`;
+  const hud = document.getElementById('hud');
+  if (hud) hud.textContent = 'failed — see the message in the sidebar';
+  const busy = document.getElementById('busy');
+  if (busy) busy.classList.remove('show');
+}
+addEventListener('error', (e) => fail('Script error', e.error || e.message));
+addEventListener('unhandledrejection', (e) => fail('Async error', e.reason));
+
+function status(msg) {
+  const hud = document.getElementById('hud');
+  if (hud) hud.textContent = msg;
+}
+const PLATE = 250;
+
+// The first entry is vendored, so the app can engrave titles with no network
+// at all. The rest are fetched on demand and fail soft if unreachable.
+const FONTS = [
+  ['Liberation Serif (offline)', './vendor/LiberationSerif-Regular.ttf'],
+  ['EB Garamond', 'https://cdn.jsdelivr.net/fontsource/fonts/eb-garamond@latest/latin-400-normal.ttf'],
+  ['Libre Baskerville', 'https://cdn.jsdelivr.net/fontsource/fonts/libre-baskerville@latest/latin-400-normal.ttf'],
+  ['Playfair Display', 'https://cdn.jsdelivr.net/fontsource/fonts/playfair-display@latest/latin-400-normal.ttf'],
+  ['Lora', 'https://cdn.jsdelivr.net/fontsource/fonts/lora@latest/latin-400-normal.ttf'],
+  ['Cinzel', 'https://cdn.jsdelivr.net/fontsource/fonts/cinzel@latest/latin-400-normal.ttf'],
+  ['Roboto Slab', 'https://cdn.jsdelivr.net/fontsource/fonts/roboto-slab@latest/latin-400-normal.ttf'],
+];
+
+// ---------------------------------------------------------------- viewport
+
+const main = $('main');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+main.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x12100e);
+const camera = new THREE.PerspectiveCamera(38, 1, 1, 5000);
+camera.position.set(360, -430, 300);
+camera.up.set(0, 0, 1);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.target.set(0, 0, 20);
+
+scene.add(new THREE.HemisphereLight(0xf2e6d2, 0x2a231a, 1.5));
+const key = new THREE.DirectionalLight(0xffffff, 1.5);
+key.position.set(220, -320, 420);
+scene.add(key);
+const rim = new THREE.DirectionalLight(0x9ab8d0, 0.5);
+rim.position.set(-300, 220, 120);
+scene.add(rim);
+
+const grid = new THREE.GridHelper(600, 24, 0x3a332a, 0x262119);
+grid.rotation.x = Math.PI / 2;
+scene.add(grid);
+
+const MATS = {
+  case: new THREE.MeshStandardMaterial({ color: 0x8a5a33, roughness: .78, metalness: .04 }),
+  cover: new THREE.MeshStandardMaterial({ color: 0x9c6a3d, roughness: .78, metalness: .04 }),
+  pages: new THREE.MeshStandardMaterial({ color: 0xd9cfb6, roughness: .92, metalness: 0 }),
+};
+const group = new THREE.Group();
+scene.add(group);
+
+function resize() {
+  const w = main.clientWidth, h = main.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(main);
+resize();
+(function loop() {
+  requestAnimationFrame(loop);
+  controls.update();
+  renderer.render(scene, camera);
+})();
+
+let fitted = false;
+function fitView() {
+  const box = new THREE.Box3().setFromObject(group);
+  if (box.isEmpty()) return;
+  const size = box.getSize(new THREE.Vector3());
+  const c = box.getCenter(new THREE.Vector3());
+  const radius = Math.max(size.x, size.y, size.z) * 0.62;
+  const d = radius / Math.sin((camera.fov * Math.PI / 180) / 2);
+  controls.target.copy(c);
+  camera.position.set(c.x + d * 0.45, c.y - d * 0.78, c.z + d * 0.52);
+  camera.near = d / 100; camera.far = d * 10;
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+
+function manifoldToThree(mesh) {
+  const g = new THREE.BufferGeometry();
+  const S = mesh.numProp;
+  const n = mesh.vertProperties.length / S;
+  const pos = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    pos[i*3] = mesh.vertProperties[i*S];
+    pos[i*3+1] = mesh.vertProperties[i*S+1];
+    pos[i*3+2] = mesh.vertProperties[i*S+2];
+  }
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setIndex(new THREE.BufferAttribute(new Uint32Array(mesh.triVerts), 1));
+  g.computeVertexNormals();
+  return g;
+}
+
+// ---------------------------------------------------------------- state
+
+let gen = null;
+let font = null;
+let last = null;
+const visible = { case: true, cover: true, pages: true };
+let queued = false, running = false;
+
+const num = (id) => parseFloat($(id).value);
+
+function params() {
+  return {
+    width: num('width'), length: num('length'), thickness: num('thick'),
+    pagePitch: num('pitch'), pageDepth: num('pdepth'), etchDepth: num('etch'),
+    f1: $('f1').value, f2: $('f2').value, sp: $('sp').value,
+    fsize: num('fsize'), ssize: num('ssize'), track: num('track'),
+  };
+}
+
+function shapesFor(str, size, track) {
+  if (!font || !str.trim()) return null;
+  const r = textPolygons(font, str, size, track);
+  return r.polys.length ? r.polys : null;
+}
+
+function updateReadouts(p) {
+  $('vw').textContent = p.width.toFixed(1);
+  $('vl').textContent = p.length.toFixed(1);
+  $('vt').textContent = p.thickness.toFixed(2);
+  $('vfs').textContent = p.fsize.toFixed(1);
+  $('vss').textContent = p.ssize.toFixed(1);
+  $('vtr').textContent = p.track.toFixed(1);
+  $('vpp').textContent = p.pagePitch.toFixed(3);
+  $('vpd').textContent = p.pageDepth.toFixed(3);
+  $('ved').textContent = p.etchDepth.toFixed(3);
+
+  const over = p.width > PLATE || p.length > PLATE;
+  $('plateWarn').innerHTML = over
+    ? `<span class="warn">${p.width.toFixed(0)} × ${p.length.toFixed(0)} mm exceeds a
+       ${PLATE} mm plate — the case will not print.</span>`
+    : `Footprint ${p.width.toFixed(0)} × ${p.length.toFixed(0)} mm
+       (${PLATE} mm plate leaves ${(PLATE - Math.max(p.width, p.length)).toFixed(0)} mm).`;
+
+  // spine channel fit
+  if (font && $('sp').value.trim()) {
+    const r = textPolygons(font, $('sp').value, p.ssize, p.track);
+    const avail = 183.686 + (p.length - DATA.nominal.l);
+    $('fitHint').innerHTML = r.width > avail
+      ? `<span class="warn">Spine title is ${r.width.toFixed(0)} mm; the channel is
+         ${avail.toFixed(0)} mm. Reduce size or spacing.</span>`
+      : `Spine title ${r.width.toFixed(0)} mm of ${avail.toFixed(0)} mm available.`;
+  }
+}
+
+async function regenerate() {
+  if (running) { queued = true; return; }
+  running = true;
+  $('busy').classList.add('show');
+  $('err').textContent = '';
+  await new Promise(r => setTimeout(r, 0));
+  const t0 = performance.now();
+  try {
+    const p = params();
+    updateReadouts(p);
+    const tText = performance.now();
+    const shapes = {
+      front1Shapes: shapesFor(p.f1, p.fsize, p.track),
+      front2Shapes: shapesFor(p.f2, p.fsize, p.track),
+      spineShapes: shapesFor(p.sp, p.ssize, p.track),
+    };
+    const msText = performance.now() - tText;
+    const tCSG = performance.now();
+    const r = gen.build({
+      width: p.width, length: p.length, thickness: p.thickness,
+      pagePitch: p.pagePitch, pageDepth: p.pageDepth, etchDepth: p.etchDepth,
+      ...shapes,
+    });
+    // manifold is lazy: build() returns a promise-of-geometry and does the
+    // real work on first access. Force it here so the timer means something.
+    r.case.numTri(); r.cover.numTri(); r.pages.numTri();
+    const msCSG = performance.now() - tCSG;
+    last = r;
+    const tGL = performance.now();
+    group.clear();
+    let tris = 0;
+    const spread = p.width + 15;
+    ['case', 'cover', 'pages'].forEach((k, i) => {
+      tris += r[k].numTri();
+      if (!visible[k]) return;
+      const m = new THREE.Mesh(manifoldToThree(r[k].getMesh()), MATS[k]);
+      m.position.x = (i - 1) * spread;
+      group.add(m);
+    });
+    const msGL = performance.now() - tGL;
+    if (!fitted) { fitView(); fitted = true; }
+    const ms = performance.now() - t0;
+    $('hud').textContent =
+      `${p.width.toFixed(1)} × ${p.length.toFixed(1)} × ${p.thickness.toFixed(2)} mm\n` +
+      `${tris.toLocaleString()} triangles\n` +
+      `${ms.toFixed(0)} ms  (text ${msText.toFixed(0)} · csg ${msCSG.toFixed(0)} · gl ${msGL.toFixed(0)})\n` +
+      `case ${(r.case.volume()/1000).toFixed(0)} cm³  ` +
+      `cover ${(r.cover.volume()/1000).toFixed(0)} cm³  ` +
+      `pages ${(r.pages.volume()/1000).toFixed(0)} cm³`;
+  } catch (e) {
+    fail('Generation failed', e);
+  }
+  $('busy').classList.remove('show');
+  running = false;
+  if (queued) { queued = false; regenerate(); }
+}
+
+let timer = null;
+function schedule() { clearTimeout(timer); timer = setTimeout(regenerate, 140); }
+
+// ---------------------------------------------------------------- downloads
+
+function save(bytes, name, type) {
+  const blob = new Blob([bytes], { type });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+$('dl3mf').onclick = () => {
+  if (!last) return;
+  const p = params();
+  const parts = [];
+  const spread = p.width + 15;
+  ['case', 'cover', 'pages'].forEach((k, i) => {
+    parts.push({ name: k, mesh: last[k].getMesh(), offset: [(i - 1) * spread, 0] });
+  });
+  save(meshesTo3MF(parts), 'hidden-book.3mf', 'model/3mf');
+};
+
+$('dlstl').onclick = () => {
+  if (!last) return;
+  const k = ['case', 'cover', 'pages'].find(x => visible[x]) || 'case';
+  save(meshToSTL(last[k].getMesh(), k), `hidden-book-${k}.stl`, 'model/stl');
+};
+
+document.querySelectorAll('#parts button').forEach(b => {
+  b.onclick = () => {
+    const k = b.dataset.p;
+    visible[k] = !visible[k];
+    b.classList.toggle('on', visible[k]);
+    regenerate();
+  };
+});
+
+// ---------------------------------------------------------------- boot
+
+async function loadFont(url) {
+  const buf = await (await fetch(url)).arrayBuffer();
+  font = opentype.parse(buf);
+}
+
+(async function boot() {
+ try {
+  const sel = $('font');
+  FONTS.forEach(([n, u]) => {
+    const o = document.createElement('option');
+    o.value = u; o.textContent = n; sel.appendChild(o);
+  });
+  sel.onchange = async () => {
+    try { await loadFont(sel.value); regenerate(); }
+    catch (e) { $('err').textContent = 'Font load failed: ' + e.message; }
+  };
+  $('fontFile').onchange = async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    font = opentype.parse(await f.arrayBuffer());
+    regenerate();
+  };
+
+  status('loading CSG engine...');
+  const wasm = await ManifoldModule();
+  wasm.setup();
+  gen = createGenerator(wasm);
+
+  status('loading font...');
+  try { await loadFont(FONTS[0][1]); }
+  catch (e) {
+    console.warn('font load failed', e);
+    $('err').textContent =
+      'Could not fetch the default font. Titles will be skipped — '
+      + 'pick another font or load a .ttf below.';
+  }
+
+  status('generating...');
+
+  ['width','length','thick','pitch','pdepth','etch','fsize','ssize','track']
+    .forEach(id => $(id).addEventListener('input', schedule));
+  ['f1','f2','sp'].forEach(id => $(id).addEventListener('input', schedule));
+
+  window.__book = { get last() { return last; }, gen, params, regenerate, fitView };
+  regenerate();
+ } catch (e) { fail('Startup failed', e); }
+})();
