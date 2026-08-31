@@ -382,6 +382,64 @@ export function createGenerator(wasm) {
     return Manifold.union([levelled, Manifold.compose(ridges)]);
   }
 
+  // --- spine decal ---------------------------------------------------------
+  //
+  // The base mesh carries a moulded panel on the spine near the tail: a
+  // recessed square frame with a device inside it. Measured off the nominal
+  // build by bisecting the edges of the recess -- 22.2250 mm square (7/8 inch)
+  // centred at y -98.9520 and local z 0.0000, cut 1.1380 mm into the face.
+  // verify2.mjs re-derives all four and fails if data.js is regenerated and
+  // they move.
+  //
+  // The panel straddles the cut plane (local z -11.11 .. +11.11, Z0 = 1.79),
+  // so thickening stretches the moulded one: at 43.15 mm it comes out 32.1 mm
+  // tall instead of 22.2. Filling it and re-engraving does not have that
+  // problem, because the replacement is placed rather than inherited.
+  //
+  // `depth` is the modal value, not a single true one: the moulded floor is
+  // FLAT while the spine face is curved, so the cut measures 1.09 mm at the
+  // panel's ends and 1.23 mm across its middle. A replacement is cut a
+  // constant depth from the face instead, so its floor follows the curve.
+  const DECAL = { w: 22.225, h: 22.225, cy: -98.952, cz: 0, depth: 1.19 };
+
+  /**
+   * Fill the moulded panel back to the smooth spine face.
+   *
+   * The spine's x-z profile is prismatic along y to within 0.008 mm (measured
+   * at y 0, -70, -85, -113 and -116), so a section taken clear of the panel
+   * and swept across it models the face the panel is cut into. Clipped to a
+   * box around the panel and unioned on, it fills the recess and changes
+   * nothing where the face is already smooth.
+   */
+  function fillDecal(caseM, dx, dy, dz) {
+    const R = caseM.rotate([90, 0, 0]);          // sweep axis: y becomes z
+    const sec = R.slice(0);                      // the spine, clear of the panel
+    if (!sec.numContour()) return caseM;
+    const pad = 1;
+    const y0 = stretch1(DECAL.cy - DECAL.w / 2 - pad, PARTS.case.yb, dy);
+    const y1 = stretch1(DECAL.cy + DECAL.w / 2 + pad, PARTS.case.yb, dy);
+    const prism = Manifold.extrude(sec, y1 - y0)
+      .translate([0, 0, y0]).rotate([-90, 0, 0]);
+    const zHalf = DECAL.h / 2 + pad + dz / 2;
+    const box = Manifold.cube([3.5, y1 - y0, zHalf * 2], true).translate([
+      stretch1(-92, PARTS.case.xb, dx), (y0 + y1) / 2, DECAL.cz + dz / 2]);
+    return Manifold.union([caseM, prism.intersect(box)]);
+  }
+
+  /** Where a replacement decal sits: the spine face, centred on the panel. */
+  function decalMatrix(dx, dy, dz) {
+    const m = text.spineMatrix;
+    return [
+      m[0][0], m[1][0], m[2][0], 0,
+      m[0][1], m[1][1], m[2][1], 0,
+      m[0][2], m[1][2], m[2][2], 0,
+      stretch1(m[0][3], PARTS.case.xb, dx),
+      stretch1(DECAL.cy, PARTS.case.yb, dy),
+      DECAL.cz + dz / 2,               // recentres on the taller spine
+      1,
+    ];
+  }
+
   /** Glyph outlines -> a cutting solid, positioned by `xform`. */
   function cutter(shapes, xform, depth, proud, tol) {
     if (!shapes || !shapes.length) return null;
@@ -421,9 +479,21 @@ export function createGenerator(wasm) {
     const depth = o.pageDepth ?? page.depth;
     const etch = o.etchDepth ?? text.etchDepth;
 
-    // --- case: thickened, spine title engraved
+    // --- case: thickened, decal replaced, spine title engraved
     const tol = o.textTolerance ?? 0.01;
     let caseM = thicken(solidOf('case', dx, dy), dz);
+
+    // The decal comes first: filling it must not paste over an engraving.
+    const decalMode = o.spineDecal ?? 'original';
+    if (decalMode !== 'original') {
+      caseM = fillDecal(caseM, dx, dy, dz);
+      if (decalMode === 'svg' && o.decalShapes && o.decalShapes.length) {
+        caseM = engraveAll(caseM, [cutter(
+          o.decalShapes, decalMatrix(dx, dy, dz),
+          o.decalDepth ?? DECAL.depth, text.proud, tol)]);
+      }
+    }
+
     if (o.spineShapes) {
       const m = text.spineMatrix;
       // column-major 4x3 for manifold's transform()
@@ -497,10 +567,11 @@ export function createGenerator(wasm) {
       pages: pagesM.translate([0, 0, drop.pages]),
       // present only when a separate drop-in plate was asked for
       plate: plateM ? plateM.translate([0, 0, drop.pages]) : null,
-      info: { width, length, thickness, dx, dy, dz, pitch, depth, grid: gridInfo },
+      info: { width, length, thickness, dx, dy, dz, pitch, depth,
+              grid: gridInfo, decal: { mode: decalMode, ...DECAL } },
     };
   }
 
-  return { build, thicken, pageTexture, solidOf, stretch1, cutter, engraveAll,
+  return { build, thicken, pageTexture, fillDecal, DECAL, solidOf, stretch1, cutter, engraveAll,
            compartment, compartmentFootprint, sizeForUnits, unitsFor, gridfinity: gf };
 }

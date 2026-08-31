@@ -8,6 +8,7 @@ import ManifoldModule from 'manifold-3d';
 import * as opentype from 'opentype';
 import { createGenerator, PARTS } from './book.js';
 import { textPolygons, meshToSTL, meshesTo3MF } from './export.js';
+import { svgPolygons, fitPolygons } from './svg.js';
 import { DATA } from './data.js';
 
 const $ = (id) => document.getElementById(id);
@@ -134,6 +135,7 @@ function manifoldToThree(mesh) {
 
 let gen = null;
 let font = null;
+let decalArt = null;   // { polys, view, name } from the uploaded SVG
 let last = null;
 const visible = { case: true, cover: true, pages: true, plate: true };
 let queued = false, running = false;
@@ -156,9 +158,20 @@ function params() {
     f1: $('f1').value, f2: $('f2').value, sp: $('sp').value,
     fsize: num('fsize'), ssize: num('ssize'), track: num('track'),
     gfMode: $('gfmode').value,
+    decalMode: $('decalmode').value,
+    decalFit: num('decalfit'), decalDepth: num('decaldepth'),
     gfx: num('gfx'), gfy: num('gfy'),
     gclear: num('gclear'), ggap: num('ggap'),
   };
+}
+
+// The uploaded artwork, scaled into the panel. Recomputed per build so the
+// fit slider works without re-parsing the file.
+function decalShapesFor(p) {
+  if (p.decalMode !== 'svg' || !decalArt || !gen) return null;
+  const d = gen.DECAL;
+  const polys = fitPolygons(decalArt.polys, decalArt.view, d.w, d.h, p.decalFit);
+  return polys.length ? polys : null;
 }
 
 function shapesFor(str, size, track) {
@@ -182,6 +195,16 @@ function updateReadouts(p) {
   $('vgfy').textContent = p.gfy ? p.gfy.toFixed(0) : 'auto';
   $('vgc').textContent = p.gclear.toFixed(2);
   $('vgg').textContent = p.ggap.toFixed(2);
+  $('vdf').textContent = p.decalFit.toFixed(2);
+  $('vdd').textContent = p.decalDepth.toFixed(3);
+  $('decalHint').innerHTML = p.decalMode === 'original'
+    ? 'The moulded panel is used as-is.'
+    : p.decalMode === 'none'
+      ? 'Panel filled back to the spine face.'
+      : decalArt
+        ? `${decalArt.name}: ${decalArt.polys.length} outline${decalArt.polys.length === 1 ? '' : 's'}, `
+          + `drawn ${decalArt.view.w.toFixed(0)} &times; ${decalArt.view.h.toFixed(0)} in its own units.`
+        : '<span class="warn">No SVG loaded — the panel is filled smooth.</span>';
 
   if (gen) {
     const fit = gen.unitsFor(p);
@@ -252,6 +275,9 @@ async function regenerate() {
       width: p.width, length: p.length, thickness: p.thickness,
       pagePitch: p.pagePitch, pageDepth: p.pageDepth, etchDepth: p.etchDepth,
       gridfinity: p.gfMode,
+      spineDecal: p.decalMode,
+      decalShapes: decalShapesFor(p),
+      decalDepth: p.decalDepth,
       gridX: p.gfx || undefined, gridY: p.gfy || undefined,
       gridClearance: p.gclear, gridGap: p.ggap,
       ...shapes,
@@ -377,10 +403,25 @@ async function loadFont(url) {
   status('generating...');
 
   ['width','length','thick','pitch','pdepth','etch','fsize','ssize','track',
-   'gx','gy','gz','gslack','gfx','gfy','gclear','ggap']
+   'gx','gy','gz','gslack','gfx','gfy','gclear','ggap','decalfit','decaldepth']
     .forEach(id => $(id).addEventListener('input', schedule));
   ['f1','f2','sp'].forEach(id => $(id).addEventListener('input', schedule));
-  ['sizemode','gfmode'].forEach(id => $(id).addEventListener('change', regenerate));
+  ['sizemode','gfmode','decalmode'].forEach(id => $(id).addEventListener('change', regenerate));
+
+  $('decalFile').onchange = async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    try {
+      const parsed = svgPolygons(await f.text());
+      if (!parsed.polys.length) throw new Error('no filled outlines found');
+      decalArt = { ...parsed, name: f.name };
+      $('decalmode').value = 'svg';
+      regenerate();
+    } catch (err) {
+      decalArt = null;
+      $('err').textContent = `Could not read ${f.name}: ${err.message}`;
+    }
+  };
 
   window.__book = { get last() { return last; }, gen, params, regenerate, fitView };
   regenerate();

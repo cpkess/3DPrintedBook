@@ -12,7 +12,7 @@ generated output or the mesh data.**
 ```bash
 npm install            # three, manifold-3d, opentype.js (also vendored)
 node serve.mjs         # http://localhost:8080 — ES modules need http, not file://
-npm test               # test.mjs + verify2.mjs + gridtest.mjs, headless
+npm test               # test.mjs + verify2.mjs + gridtest.mjs + decaltest.mjs
 node browsertest.mjs   # real Chrome via puppeteer: boot, render, rebuild
 node dltest.mjs        # verifies .3mf / .stl downloads are well-formed
 cd tools && python3 export_data.py    # regenerate src/data.js (needs numpy)
@@ -29,6 +29,7 @@ index.html        UI + importmap (points at ./vendor, nothing external)
 src/app.js        viewport, controls, downloads — the ONLY file touching the DOM
 src/book.js       the generator — headless, testable, no DOM
 src/gridfinity.js Gridfinity socket profile, baseplates, unit arithmetic
+src/svg.js        SVG outlines to polygons, for the spine decal
 src/export.js     text layout, STL writer, 3MF writer (store-only ZIP)
 src/data.js       GENERATED. base meshes + constants. 159 KB
 tools/            export_data.py, pagetex.py, extract_3mf.py, stl/
@@ -257,6 +258,42 @@ on the ink bounding box — matching the source 3MF exactly. There is no
 `baseline_k` fudge factor; if you find yourself adding one, something else is
 wrong. opentype 2.0 exports **named** bindings, no default: use
 `import * as opentype`.
+
+## Spine decal
+
+The base mesh carries a moulded panel on the spine near the tail: a recessed
+square frame with a device in it. Measured off the nominal build by bisecting
+the edges of the recess — **22.2250 mm square (7/8 inch)**, centred at
+y −98.9520 and local z 0.0000, and `decaltest.mjs` re-derives all four so a
+regenerated `data.js` cannot move them silently.
+
+`DECAL.depth` is 1.19 and is a **modal** value, not a true one: the moulded
+floor is flat while the spine face is curved, so the cut measures 1.09 mm at
+the panel's ends and 1.23 mm across its middle. A replacement is cut a
+constant depth from the face instead, so its floor follows the curve.
+
+**The moulded panel straddles the cut plane** (local z −11.11 … +11.11,
+Z0 = 1.79), so thickening stretches it: at 43.15 mm it comes out 32.1 mm tall
+instead of 22.2, and at 80 mm, 32.0. `'none'` and `'svg'` do not have that
+problem, because a replacement is *placed* rather than inherited — measured
+identical at 33.15, 43.15 and 80.
+
+Filling it back works because the spine's x-z profile is prismatic along y to
+within **0.008 mm** (measured at y 0, −70, −85, −113, −116). `fillDecal()`
+takes the section at y = 0, sweeps it across the panel, clips it to a box
+round the spine face and unions it on — which fills the recess and changes
+nothing where the face is already smooth.
+
+`svg.js` has no DOM dependency, so an uploaded file can be checked headless;
+that rules out `DOMParser`, hence the small tag scanner. It emits the same
+shape of data as `textPolygons()`, so the same `cutter()` engraves both.
+Winding is **preserved, not normalised** — SVG's default fill-rule is nonzero
+and manifold's `'NonZero'` reads a counter-wound subpath as a hole, which is
+what a counter or a ring is. Only elements that actually ask for `evenodd`
+get re-wound, by nesting parity; re-winding everything would punch holes that
+nonzero artwork does not have. Strokes are ignored: only filled area is
+geometry. y is flipped on the way out, which reverses every ring together and
+so leaves outer-vs-hole winding intact.
 
 ## Known limits
 

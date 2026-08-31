@@ -79,6 +79,23 @@ Sockets are cut right through, so a bin's foot lands on the compartment floor
 and n height units need exactly n x 7 mm — verified at 3, 4, 5 and 8 units,
 all exact to within 0.005 mm. A 250 mm plate tops out at 5 x 5 units.
 
+## Spine decal
+
+The moulded panel on the spine — a 22.2 mm (7/8 inch) recessed square frame
+with a device in it — can be left alone, filled smooth, or replaced with an
+uploaded SVG.
+
+The panel straddles the cut plane, so the moulded one stretches as the book
+thickens: 22.2 mm tall at nominal, 32.1 mm at 43.15. A filled or replaced
+panel is placed rather than inherited and measures identical at 33.15, 43.15
+and 80 mm.
+
+`src/svg.js` turns paths, rects, circles, ellipses, polygons and polylines
+into outlines, with transforms, arcs and beziers, and both fill rules.
+Strokes are ignored — only filled area becomes geometry, which is what an
+engraving is. It has no DOM dependency, so uploads are checked headless in
+`decaltest.mjs`.
+
 ## How the geometry works
 
 **Width and length — feature-preserving stretch.** Each part has a band along

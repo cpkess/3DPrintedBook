@@ -161,6 +161,27 @@
       <div class="hint" id="fitHint"></div>
     </div></details>
 
+    <details><summary>Spine decal</summary><div class="body">
+      <div class="row"><label>Panel</label>
+        <select id="decalmode">
+          <option value="original">moulded original</option>
+          <option value="none">none (filled smooth)</option>
+          <option value="svg">custom SVG</option>
+        </select></div>
+      <div class="row"><label>SVG file</label>
+        <input type="file" id="decalFile" accept=".svg,image/svg+xml"></div>
+      <div class="row"><label>Fill the panel <b id="vdf">0.80</b></label>
+        <input type="range" id="decalfit" min="0.2" max="1" step="0.01" value="0.8"></div>
+      <div class="row"><label>Engrave depth <b id="vdd">1.138</b></label>
+        <input type="range" id="decaldepth" min="0.2" max="2.5" step="0.005" value="1.138"></div>
+      <div class="hint" id="decalHint"></div>
+      <div class="hint">The moulded panel is a 22.2&nbsp;mm square (7/8&nbsp;inch)
+        recessed 1.138&nbsp;mm into the spine. It straddles the cut plane, so the
+        moulded one stretches as the book gets thicker; a filled or replaced
+        panel is placed instead of inherited and keeps its size. Filled shapes
+        are engraved — strokes are ignored, and both fill rules are honoured.</div>
+    </div></details>
+
     <details><summary>Page edges</summary><div class="body">
       <div class="row"><label>Line pitch <b id="vpp">0.465</b></label>
         <input type="range" id="pitch" min="0.25" max="2" step="0.005" value="0.465"></div>

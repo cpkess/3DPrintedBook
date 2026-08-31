@@ -120,6 +120,30 @@ console.log(await page.evaluate(() => {
 }));
 const lateErrs = await page.$eval('#err', e => e.textContent.trim());
 console.log('#err after gridfinity runs:', lateErrs || '(empty)');
+
+// --- spine decal: off, then a real SVG upload ----------------------------
+console.log('\n=== spine decal: none ===');
+await page.evaluate(() => {
+  const g = document.getElementById('gfmode');
+  g.value = 'none'; g.dispatchEvent(new Event('change', { bubbles: true }));
+  const d = document.getElementById('decalmode');
+  d.value = 'none'; d.dispatchEvent(new Event('change', { bubbles: true }));
+});
+await new Promise(r => setTimeout(r, 2500));
+console.log('hint:', await page.$eval('#decalHint', e => e.textContent.trim()));
+
+console.log('\n=== spine decal: upload an SVG ===');
+const input = await page.$('#decalFile');
+await input.uploadFile('/tmp/mark.svg');
+await new Promise(r => setTimeout(r, 3000));
+console.log('mode is now:', await page.$eval('#decalmode', e => e.value));
+console.log('hint:', await page.$eval('#decalHint', e => e.textContent.trim()));
+console.log(await page.evaluate(() => {
+  const r = window.__book.last;
+  return `case ${r.case.numTri()} tris, ${(r.case.volume()/1000).toFixed(2)} cm3, decal mode ${r.info.decal.mode}`;
+}));
+console.log('#err:', (await page.$eval('#err', e => e.textContent.trim())) || '(empty)');
+await page.screenshot({ path: '/tmp/decal-ui.png' });
 await page.screenshot({ path: '/tmp/shot.png' });
 await browser.close();
 srv.kill();
