@@ -94,6 +94,46 @@ export function createGenerator(wasm) {
     return Manifold.union([lower, bridge, upper]);
   }
 
+  const signedArea = (poly) => {
+    let a = 0;
+    for (let i = 0, n = poly.length; i < n; i++) {
+      const q = poly[i], r = poly[(i + 1) % n];
+      a += q[0] * r[1] - r[0] * q[1];
+    }
+    return a / 2;
+  };
+
+  /**
+   * One ridge's cross-section: the block's own section at this height, plus a
+   * band `depth` wide outside it and nothing else.
+   *
+   * `offset()` grows every contour of a section, and a hole contour grows
+   * *inward*, so offsetting alone textures the inside of every void as well
+   * as the fore-edge. That is wrong twice over. It narrows the compartment by
+   * `depth` on all four walls, and the block also carries a 0.397 mm slot
+   * (x 85.31..85.71, running the full length from the base up to z -2) which
+   * a 0.178 mm ridge on each face pinches to 0.041 mm -- effectively closed.
+   *
+   * So the voids are subtracted back off, leaving the section plus an outward
+   * band. Deriving them per station rather than once keeps this correct for
+   * every void the block has, at any height, without naming any of them.
+   *
+   * Filling the outer contours and subtracting the section back off yields
+   * those voids whatever their number or nesting: a solid island inside a
+   * void stays out of the result, since it is part of the section.
+   *
+   * The ridge deliberately still covers the whole block interior instead of
+   * being reduced to a bare band -- a band whose inner edge did not meet
+   * solid material would union in as a detached shell.
+   */
+  function ridgeSection(xs, depth) {
+    const grown = xs.offset(depth, 'Miter', 2);
+    const outer = xs.toPolygons().filter((poly) => signedArea(poly) > 0);
+    if (!outer.length) return grown;
+    const voids = CrossSection.ofPolygons(outer, 'NonZero').subtract(xs);
+    return voids.isEmpty() ? grown : grown.subtract(voids);
+  }
+
   /**
    * Regenerate the page lines over the whole block.
    *
@@ -118,7 +158,7 @@ export function createGenerator(wasm) {
       const k = Math.round(zo / step);
       if (!cache.has(k)) {
         const xs = solid.slice(k * step);
-        cache.set(k, xs.numContour() ? xs.offset(depth, 'Miter', 2) : null);
+        cache.set(k, xs.numContour() ? ridgeSection(xs, depth) : null);
       }
       return cache.get(k);
     };

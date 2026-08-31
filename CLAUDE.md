@@ -103,6 +103,20 @@ polar angle does not work: on a 175 × 231 rounded rectangle the radius varies
 less than a third of it. Normal-axis filtering takes the residual from
 0.178 mm to 0.040 mm.
 
+**Only the outside gets texture.** `offset()` grows every contour of a
+cross-section, and a hole contour grows *inward*, so offsetting the raw
+section textures the inside of every void as well as the fore-edge. That
+narrowed the compartment by `depth` on all four walls, and pinched the
+0.397 mm slot at x 85.31 … 85.71 (full length, base up to z −2) down to
+0.041 mm at every ridge — effectively closed. `ridgeSection()` subtracts the
+voids back off, leaving the section plus an outward band. Derive the voids
+per station, not once: the compartment walls are prismatic in z (0.0000 mm
+drift, measured at every thickness) but the slot only exists over part of the
+height, so a single sample silently misses whatever it does not span. Ridges
+keep covering the whole block interior rather than being trimmed to a bare
+band — a band whose inner edge did not meet solid material would union in as
+a detached shell.
+
 Ridges pull their outline from the block at the height they sit at, not from a
 single constant outline. The fore-edge drifts 0.38 mm over the block height —
 more than twice the ridge depth — so a constant outline makes lines protrude
