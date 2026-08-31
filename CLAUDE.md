@@ -118,10 +118,35 @@ keep covering the whole block interior rather than being trimmed to a bare
 band — a band whose inner edge did not meet solid material would union in as
 a detached shell.
 
-Ridges pull their outline from the block at the height they sit at, not from a
-single constant outline. The fore-edge drifts 0.38 mm over the block height —
-more than twice the ridge depth — so a constant outline makes lines protrude
-at mid-height and vanish at the ends.
+**One outline rule, everywhere.** Each ridge takes its outline from the solid
+at *its own mid-height*, with no rounding and no remapping. The fore-edge
+drifts 0.235 mm over the ridge range — more than the 0.178 mm depth — and is
+not smooth: it steps 0.109 mm in 0.116 mm of z at z 4.2. Two shortcuts used to
+live here and both made the ends of the block disagree with its middle:
+
+- Rounding the sample to a 0.5 mm table station (`page.tableStep`, now unused)
+  put the outline up to 0.25 mm away in z. That is nothing in the inserted
+  band, which is prismatic, and up to 0.13 mm at the ends, where the fore-edge
+  turns over — so the band came out uniform and the ends ragged.
+- Ridges above the band sampled `zw - dz` on the **thickened** solid, but that
+  solid's section at `zw - dz` is not the original section there once
+  `zw - dz` lands inside the band. At dz 46.85 every ridge above the band
+  resolved into the bridge and got the Z0 outline: 16 of 20 wrong, one at
+  0.065 mm against 0.178 mm, and three ridges vanished outright.
+
+Collapsing band ridges onto Z0 is kept — there it is exact, not an
+approximation — and keeps the whole band at one slice however thick the book.
+
+Measured after: no ridge below half depth at any thickness (was 1 / 3 / 2 at
+33.15 / 43.15 / 80), minimum protrusion 0.0029 → 0.1145 mm, and 133 of 150
+ridges flat to 0.005 mm across their own span.
+
+**Do not subdivide ridges to chase the rest.** The residual is the block's own
+round-over: a prism cannot follow a surface that moves under it. Lofting with
+k sub-slabs per ridge needs a real union instead of `compose`, and measured
+517 ms → 2444 ms (k=2) → 7649 ms (k=4) to take the worst within-ridge
+variation from 0.116 to 0.066 to 0.028 mm. Not worth it on an interactive
+slider.
 
 Outlines are decimated to 0.5 mm before offsetting. Corner fillets are
 tessellated down to 0.014 mm edges, and any offset larger than half such an

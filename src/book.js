@@ -237,12 +237,31 @@ export function createGenerator(wasm) {
   /**
    * Regenerate the page lines over the whole block.
    *
-   * Each ridge takes its outline from the block at the height it sits at, so
-   * it follows the block's curve. The fore-edge drifts ~0.38 mm over the
-   * block's height, more than twice the ridge depth, so a single constant
-   * outline would make lines protrude at mid-height and vanish at the ends.
-   * Ridges inside the inserted band map back to Z0, since the band is a
-   * prism of that section.
+   * One rule for every ridge, in every part of the block: take the outline
+   * from the solid at the ridge's own mid-height. The fore-edge drifts
+   * 0.235 mm over the ridge range -- more than the 0.178 mm ridge depth --
+   * and is not smooth: there is a step at z 4.2 where it moves 0.109 mm in
+   * 0.116 mm of z. So the outline has to come from where the ridge actually
+   * is, and mid-height rather than the base halves the residual across the
+   * ridge's own 0.2325 mm span.
+   *
+   * Two shortcuts that were here before are gone, because they made the ends
+   * of the block disagree with its middle:
+   *
+   *   Rounding the sample to a 0.5 mm table station put the outline up to
+   *   0.25 mm away in z. That is nothing in the inserted band, which is
+   *   prismatic, and up to 0.13 mm at the block's ends, where the fore-edge
+   *   turns over -- so the band came out uniform and the ends ragged.
+   *
+   *   Ridges above the band sampled `zw - dz` on the *thickened* solid, but
+   *   that solid's section at `zw - dz` is not the original section there
+   *   once `zw - dz` lands inside the band. At dz 46.85 every ridge above the
+   *   band resolved into the bridge and got the Z0 outline, so 16 of 20 came
+   *   out wrong, one at 0.065 mm against 0.178 mm.
+   *
+   * Collapsing ridges inside the band onto Z0 is kept, because there it is
+   * exact rather than an approximation: the band is a prism of that section.
+   * It also keeps the whole band at one slice however thick the book gets.
    */
   function pageLines(solid, dz, pitch, depth, dx, dy) {
     if (depth <= 0 || pitch <= 0) return null;
@@ -251,16 +270,14 @@ export function createGenerator(wasm) {
     const n = Math.max(1, Math.round((hi - lo) / pitch));
     const p = (hi - lo) / n;
 
-    // one slice per table station, reused by every ridge that maps to it
-    const step = page.tableStep;
     const cache = new Map();
-    const sectionAt = (zo) => {
-      const k = Math.round(zo / step);
-      if (!cache.has(k)) {
-        const xs = solid.slice(k * step);
-        cache.set(k, xs.numContour() ? ridgeSection(xs, depth) : null);
+    const sectionAt = (z) => {
+      const key = (z > Z0 && z < Z0 + dz) ? Z0 : z;
+      if (!cache.has(key)) {
+        const xs = solid.slice(key);
+        cache.set(key, xs.numContour() ? ridgeSection(xs, depth) : null);
       }
-      return cache.get(k);
+      return cache.get(key);
     };
 
     const spineX = stretch1(page.xSpine, PARTS.pages.xb, dx);
@@ -270,8 +287,7 @@ export function createGenerator(wasm) {
     const ridges = [];
     for (let i = 0; i < n; i++) {
       const zw = lo + i * p;
-      const zo = zw < Z0 ? zw : (zw > Z0 + dz ? zw - dz : Z0);
-      const xs = sectionAt(zo);
+      const xs = sectionAt(zw + p / 4);   // the ridge spans zw .. zw + p/2
       if (!xs) continue;
       ridges.push(Manifold.extrude(xs, p / 2).translate([0, 0, zw]));
     }
