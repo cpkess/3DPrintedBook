@@ -52,6 +52,33 @@ of the parameter space. Further checks in `verify2.mjs`:
 | page pitch requested 0.465 / 0.8 / 1.2 | tracks, depth within 0.001 mm |
 | 3MF output | passes `unzip -t`, 3 named objects, 3 build items |
 
+## Gridfinity
+
+The compartment can be sized in gridfinity units instead of millimetres, in
+all three axes, and can carry a baseplate — either a separate drop-in plate or
+one built into the page block.
+
+Socket geometry follows the reference implementation
+(kennetek/gridfinity-rebuilt-openscad): 42 mm grid, 7 mm height unit, 41.5 mm
+mouth on a 3.75 mm corner radius, 4.75 mm deep, chamfer 0.8 / straight 1.8 /
+chamfer 2.15. Each chamfer is a convex hull between two rings of the same
+34 mm core square, which reproduces the constant-radius offset exactly rather
+than approximating it. Measured against the spec in the built plate, every
+socket section from 3x5 up to 5x5: **worst error 0.0042 mm, pitch exact**.
+
+Sizing is derived from the compartment, which is measured off the mesh rather
+than written down:
+
+```
+book width     = 42*gx + slack + 25.521
+book length    = 42*gy + slack + 15.240
+book thickness = 7*gz + 12.900
+```
+
+Sockets are cut right through, so a bin's foot lands on the compartment floor
+and n height units need exactly n x 7 mm — verified at 3, 4, 5 and 8 units,
+all exact to within 0.005 mm. A 250 mm plate tops out at 5 x 5 units.
+
 ## How the geometry works
 
 **Width and length — feature-preserving stretch.** Each part has a band along

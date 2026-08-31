@@ -83,16 +83,60 @@
   </div>
   <div id="scroll">
     <details open><summary>Size</summary><div class="body">
-      <div class="row"><label>Width <b id="vw">185.5</b></label>
-        <input type="range" id="width" min="120" max="250" step="0.5" value="185.5"></div>
-      <div class="row"><label>Length <b id="vl">239.2</b></label>
-        <input type="range" id="length" min="150" max="250" step="0.5" value="239.2"></div>
-      <div class="row"><label>Thickness <b id="vt">33.15</b></label>
-        <input type="range" id="thick" min="33.15" max="80" step="0.25" value="33.15"></div>
+      <div class="row"><label>Size in</label>
+        <select id="sizemode">
+          <option value="mm">millimetres</option>
+          <option value="grid">gridfinity units</option>
+        </select></div>
+
+      <div id="mmSize">
+        <div class="row"><label>Width <b id="vw">185.5</b></label>
+          <input type="range" id="width" min="120" max="250" step="0.5" value="185.5"></div>
+        <div class="row"><label>Length <b id="vl">239.2</b></label>
+          <input type="range" id="length" min="150" max="250" step="0.5" value="239.2"></div>
+        <div class="row"><label>Thickness <b id="vt">33.15</b></label>
+          <input type="range" id="thick" min="33.15" max="80" step="0.25" value="33.15"></div>
+      </div>
+
+      <div id="gridSize" hidden>
+        <div class="row"><label>Grid X &middot; 42 mm <b id="vgx">3</b></label>
+          <input type="range" id="gx" min="1" max="5" step="1" value="3"></div>
+        <div class="row"><label>Grid Y &middot; 42 mm <b id="vgy">5</b></label>
+          <input type="range" id="gy" min="1" max="5" step="1" value="5"></div>
+        <div class="row"><label>Height units &middot; 7 mm <b id="vgz">3</b></label>
+          <input type="range" id="gz" min="1" max="9" step="1" value="3"></div>
+        <div class="row"><label>Fit slack <b id="vgs">0.50</b></label>
+          <input type="range" id="gslack" min="0" max="3" step="0.1" value="0.5"></div>
+        <div class="hint" id="gridSizeHint"></div>
+      </div>
+
       <div class="hint" id="plateWarn"></div>
       <div class="hint">Width and length stretch only the prismatic bands, so
         fillets, hinges and snap clearances keep their original size. Thickness
         inserts a straight section at a shared cut plane and can only increase.</div>
+    </div></details>
+
+    <details><summary>Gridfinity</summary><div class="body">
+      <div class="row"><label>Baseplate</label>
+        <select id="gfmode">
+          <option value="none">none</option>
+          <option value="plate">drop-in plate (separate part)</option>
+          <option value="integrated">built into the page block</option>
+        </select></div>
+      <div class="row"><label>Sockets across <b id="vgfx">auto</b></label>
+        <input type="range" id="gfx" min="0" max="5" step="1" value="0"></div>
+      <div class="row"><label>Sockets along <b id="vgfy">auto</b></label>
+        <input type="range" id="gfy" min="0" max="5" step="1" value="0"></div>
+      <div class="row"><label>Socket clearance <b id="vgc">0.00</b></label>
+        <input type="range" id="gclear" min="0" max="0.3" step="0.01" value="0"></div>
+      <div class="row"><label>Drop-in plate gap <b id="vgg">0.50</b></label>
+        <input type="range" id="ggap" min="0" max="2" step="0.05" value="0.5"></div>
+      <div class="hint" id="gfHint"></div>
+      <div class="hint">Sockets are the standard 42&nbsp;mm grid: 41.5&nbsp;mm
+        mouth, 4.75&nbsp;mm deep, chamfer 0.8 / straight 1.8 / chamfer 2.15.
+        They are cut right through, so a bin's foot lands on the compartment
+        floor and a bin of <i>n</i> height units needs exactly
+        <i>n</i>&nbsp;&times;&nbsp;7&nbsp;mm of depth, plate or no plate.</div>
     </div></details>
 
     <details open><summary>Title</summary><div class="body">
@@ -142,6 +186,7 @@
     <button data-p="case" class="on">Case</button>
     <button data-p="cover" class="on">Cover</button>
     <button data-p="pages" class="on">Pages</button>
+    <button data-p="plate" class="on" id="plateBtn" hidden>Plate</button>
   </div>
   <div id="busy">generating…</div>
 </div>

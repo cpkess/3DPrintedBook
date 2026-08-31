@@ -25,6 +25,7 @@
 // scale() is used nowhere. It would thin the walls and change the snap fit.
 
 import { DATA } from './data.js';
+import { GRID, createGridfinity, unitsAcross } from './gridfinity.js';
 
 const B64 = typeof atob === 'function'
   ? (s) => { const bin = atob(s); const u = new Uint8Array(bin.length);
@@ -69,6 +70,7 @@ function stretchedMesh(part, dx, dy) {
 export function createGenerator(wasm) {
   const { Manifold, CrossSection } = wasm;
   const { nominal, Z0, drop, page, text } = DATA;
+  const gf = createGridfinity(wasm);
 
   const BIG = 500;
   const halfSpaceBelow = (z) =>
@@ -132,6 +134,104 @@ export function createGenerator(wasm) {
     if (!outer.length) return grown;
     const voids = CrossSection.ofPolygons(outer, 'NonZero').subtract(xs);
     return voids.isEmpty() ? grown : grown.subtract(voids);
+  }
+
+  // --- compartment ---------------------------------------------------------
+  //
+  // Measured off the mesh rather than written down: data.js is generated, so a
+  // hard-coded compartment would go stale the moment it is regenerated.
+  //
+  // Measuring once is enough, because four things hold at every size. The
+  // compartment is a sharp-cornered rectangle (its outline's corners sit
+  // exactly on its bounding box). Its walls are prismatic in z. Its floor does
+  // not move with thickness, since the block grows upward from the shared cut
+  // plane. And both spans track width and length exactly 1:1, because the
+  // compartment edges coincide with the ends of the stretch bands. So:
+  //
+  //   inner width = w + dx    inner length = l + dy    usable depth = depth + dz
+  let COMP = null;
+  function compartment() {
+    if (COMP) return COMP;
+    const base = solidOf('pages', 0, 0);
+    const [bmin, bmax] = PARTS.pages.bbox;
+
+    // The block also carries a 0.4 mm slot, so "this section has a hole" does
+    // not locate the floor. The compartment is four orders of magnitude
+    // bigger, which does.
+    const BIG = 1000;
+    const holeArea = (z) => {
+      let worst = 0;
+      for (const poly of base.slice(z).toPolygons()) {
+        const a = signedArea(poly);
+        if (a < worst) worst = a;
+      }
+      return -worst;
+    };
+    if (holeArea(Z0) < BIG) throw new Error('no compartment found in the page block');
+    let lo = bmin[2], hi = Z0;
+    for (let i = 0; i < 40; i++) {
+      const m = (lo + hi) / 2;
+      if (holeArea(m) >= BIG) hi = m; else lo = m;
+    }
+
+    const xs = base.slice(Z0);
+    const outer = xs.toPolygons().filter((poly) => signedArea(poly) > 0);
+    const voids = CrossSection.ofPolygons(outer, 'NonZero').subtract(xs);
+    let best = null;
+    for (const poly of voids.toPolygons()) {
+      const a = signedArea(poly);
+      if (a > 0 && (!best || a > best.a)) best = { a, poly };
+    }
+    const px = best.poly.map((q) => q[0]), py = best.poly.map((q) => q[1]);
+    const x0 = Math.min(...px), x1 = Math.max(...px);
+    const y0 = Math.min(...py), y1 = Math.max(...py);
+    const w = x1 - x0, l = y1 - y0;
+    COMP = {
+      w, l, depth: bmax[2] - hi, floor: hi,
+      cx: (x0 + x1) / 2, cy: (y0 + y1) / 2,
+      // what the book carries around the space inside it -- the whole of the
+      // unit arithmetic below is these three numbers
+      wPad: nominal.w - w, lPad: nominal.l - l, tPad: nominal.t - (bmax[2] - hi),
+      // how far the outline is from the rectangle we then treat it as
+      rectError: Math.abs(best.a - w * l),
+    };
+    return COMP;
+  }
+
+  /** The compartment footprint at a given book size, shrunk by `gap` total. */
+  function compartmentFootprint(dx, dy, gap = 0) {
+    const c = compartment();
+    return CrossSection
+      .square([c.w + dx - gap, c.l + dy - gap], true)
+      .translate([c.cx, c.cy]);
+  }
+
+  /**
+   * The book size whose compartment is exactly gx by gy by gz gridfinity
+   * units. Thickness only ever increases, so below three height units the
+   * nominal book is already deeper than asked for and the clamp takes over.
+   */
+  function sizeForUnits({ gx, gy, gz, gap = 0 }) {
+    const c = compartment();
+    return {
+      width: gx * GRID.pitch + gap + c.wPad,
+      length: gy * GRID.pitch + gap + c.lPad,
+      thickness: Math.max(nominal.t, gz * GRID.heightUnit + c.tPad),
+    };
+  }
+
+  /** Whole gridfinity units that fit in the compartment of a given book. */
+  function unitsFor(o = {}) {
+    const c = compartment();
+    const width = o.width ?? nominal.w;
+    const length = o.length ?? nominal.l;
+    const thickness = Math.max(nominal.t, o.thickness ?? nominal.t);
+    return {
+      gx: unitsAcross(c.w + (width - nominal.w)),
+      gy: unitsAcross(c.l + (length - nominal.l)),
+      gz: Math.max(0, Math.floor(
+        (c.depth + (thickness - nominal.t)) / GRID.heightUnit + 1e-9)),
+    };
   }
 
   /**
@@ -258,13 +358,48 @@ export function createGenerator(wasm) {
     const lines = pageLines(pagesM, dz, pitch, depth, dx, dy);
     if (lines) pagesM = pagesM.add(lines);
 
+    // --- gridfinity: a baseplate standing on the compartment floor.
+    // Added after the page lines, so the texture pass still sees the bare
+    // compartment and keeps its walls smooth.
+    const mode = o.gridfinity ?? 'none';
+    let plateM = null, gridInfo = null;
+    if (mode !== 'none') {
+      const c = compartment();
+      const fit = unitsFor({ width, length, thickness });
+      const gx = Math.min(o.gridX ?? fit.gx, fit.gx);
+      const gy = Math.min(o.gridY ?? fit.gy, fit.gy);
+      const gap = o.gridGap ?? 0.5;
+      const clearance = o.gridClearance ?? 0;
+      if (gx >= 1 && gy >= 1) {
+        const opts = { gx, gy, cx: c.cx, cy: c.cy, clearance };
+        if (mode === 'integrated') {
+          // no gap: it is the same solid as the block
+          const bp = gf.baseplate(compartmentFootprint(dx, dy, 0), opts);
+          if (bp) pagesM = pagesM.add(bp.translate([0, 0, c.floor]));
+        } else {
+          const bp = gf.baseplate(compartmentFootprint(dx, dy, gap), opts);
+          if (bp) plateM = bp.translate([0, 0, c.floor]);
+        }
+      }
+      gridInfo = {
+        mode, gx, gy, gz: fit.gz, gap, clearance,
+        innerW: c.w + dx, innerL: c.l + dy, innerDepth: c.depth + dz,
+        slackW: (c.w + dx) - gx * GRID.pitch,
+        slackL: (c.l + dy) - gy * GRID.pitch,
+        slackDepth: (c.depth + dz) - fit.gz * GRID.heightUnit,
+      };
+    }
+
     return {
       case: caseM.translate([0, 0, drop.case]),
       cover: coverM.translate([0, 0, drop.cover]),
       pages: pagesM.translate([0, 0, drop.pages]),
-      info: { width, length, thickness, dx, dy, dz, pitch, depth },
+      // present only when a separate drop-in plate was asked for
+      plate: plateM ? plateM.translate([0, 0, drop.pages]) : null,
+      info: { width, length, thickness, dx, dy, dz, pitch, depth, grid: gridInfo },
     };
   }
 
-  return { build, thicken, pageLines, solidOf, stretch1, cutter, engraveAll };
+  return { build, thicken, pageLines, solidOf, stretch1, cutter, engraveAll,
+           compartment, compartmentFootprint, sizeForUnits, unitsFor, gridfinity: gf };
 }

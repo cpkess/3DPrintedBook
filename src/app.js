@@ -78,7 +78,10 @@ const MATS = {
   case: new THREE.MeshStandardMaterial({ color: 0x8a5a33, roughness: .78, metalness: .04 }),
   cover: new THREE.MeshStandardMaterial({ color: 0x9c6a3d, roughness: .78, metalness: .04 }),
   pages: new THREE.MeshStandardMaterial({ color: 0xd9cfb6, roughness: .92, metalness: 0 }),
+  plate: new THREE.MeshStandardMaterial({ color: 0x7fa66a, roughness: .7, metalness: .05 }),
 };
+// case | cover | pages | plate -- `plate` only exists in drop-in mode
+const ORDER = ['case', 'cover', 'pages', 'plate'];
 const group = new THREE.Group();
 scene.add(group);
 
@@ -132,17 +135,29 @@ function manifoldToThree(mesh) {
 let gen = null;
 let font = null;
 let last = null;
-const visible = { case: true, cover: true, pages: true };
+const visible = { case: true, cover: true, pages: true, plate: true };
 let queued = false, running = false;
 
 const num = (id) => parseFloat($(id).value);
 
+// Gridfinity sizing is a view onto the same three millimetre dimensions, not
+// a second set: the unit sliders are converted here and everything downstream
+// still sees width/length/thickness in mm.
 function params() {
+  const sizeMode = $('sizemode').value;
+  const gx = num('gx'), gy = num('gy'), gz = num('gz'), slack = num('gslack');
+  const mm = { width: num('width'), length: num('length'), thickness: num('thick') };
+  const size = sizeMode === 'grid' && gen
+    ? gen.sizeForUnits({ gx, gy, gz, gap: slack })
+    : mm;
   return {
-    width: num('width'), length: num('length'), thickness: num('thick'),
+    ...size, sizeMode, gx, gy, gz, slack,
     pagePitch: num('pitch'), pageDepth: num('pdepth'), etchDepth: num('etch'),
     f1: $('f1').value, f2: $('f2').value, sp: $('sp').value,
     fsize: num('fsize'), ssize: num('ssize'), track: num('track'),
+    gfMode: $('gfmode').value,
+    gfx: num('gfx'), gfy: num('gfy'),
+    gclear: num('gclear'), ggap: num('ggap'),
   };
 }
 
@@ -153,9 +168,43 @@ function shapesFor(str, size, track) {
 }
 
 function updateReadouts(p) {
+  const grid = p.sizeMode === 'grid';
+  $('mmSize').hidden = grid;
+  $('gridSize').hidden = !grid;
   $('vw').textContent = p.width.toFixed(1);
   $('vl').textContent = p.length.toFixed(1);
   $('vt').textContent = p.thickness.toFixed(2);
+  $('vgx').textContent = p.gx.toFixed(0);
+  $('vgy').textContent = p.gy.toFixed(0);
+  $('vgz').textContent = p.gz.toFixed(0);
+  $('vgs').textContent = p.slack.toFixed(2);
+  $('vgfx').textContent = p.gfx ? p.gfx.toFixed(0) : 'auto';
+  $('vgfy').textContent = p.gfy ? p.gfy.toFixed(0) : 'auto';
+  $('vgc').textContent = p.gclear.toFixed(2);
+  $('vgg').textContent = p.ggap.toFixed(2);
+
+  if (gen) {
+    const fit = gen.unitsFor(p);
+    const c = gen.compartment();
+    const inner = [c.w + (p.width - DATA.nominal.w), c.l + (p.length - DATA.nominal.l),
+                   c.depth + (p.thickness - DATA.nominal.t)];
+    if (grid) {
+      // thickness clamps at nominal, so a small height request can come back
+      // deeper than asked for -- say so rather than silently overshooting
+      const over = fit.gz > p.gz;
+      $('gridSizeHint').innerHTML =
+        `Compartment ${inner[0].toFixed(1)} &times; ${inner[1].toFixed(1)} &times; `
+        + `${inner[2].toFixed(1)} mm for ${p.gx}&times;${p.gy}&times;${p.gz} units`
+        + (over ? ` — thickness cannot go below nominal, so this is `
+                  + `${fit.gz} units deep.` : '.');
+    }
+    $('gfHint').innerHTML = p.gfMode === 'none'
+      ? `Compartment holds ${fit.gx} &times; ${fit.gy} &times; ${fit.gz} gridfinity units.`
+      : `${Math.min(p.gfx || fit.gx, fit.gx)} &times; `
+        + `${Math.min(p.gfy || fit.gy, fit.gy)} sockets, `
+        + `${fit.gz} height units of clearance above the floor.`;
+  }
+
   $('vfs').textContent = p.fsize.toFixed(1);
   $('vss').textContent = p.ssize.toFixed(1);
   $('vtr').textContent = p.track.toFixed(1);
@@ -202,22 +251,27 @@ async function regenerate() {
     const r = gen.build({
       width: p.width, length: p.length, thickness: p.thickness,
       pagePitch: p.pagePitch, pageDepth: p.pageDepth, etchDepth: p.etchDepth,
+      gridfinity: p.gfMode,
+      gridX: p.gfx || undefined, gridY: p.gfy || undefined,
+      gridClearance: p.gclear, gridGap: p.ggap,
       ...shapes,
     });
     // manifold is lazy: build() returns a promise-of-geometry and does the
     // real work on first access. Force it here so the timer means something.
-    r.case.numTri(); r.cover.numTri(); r.pages.numTri();
+    ORDER.forEach((k) => { if (r[k]) r[k].numTri(); });
     const msCSG = performance.now() - tCSG;
     last = r;
     const tGL = performance.now();
     group.clear();
     let tris = 0;
+    const present = ORDER.filter((k) => r[k]);
+    $('plateBtn').hidden = !r.plate;
     const spread = p.width + 15;
-    ['case', 'cover', 'pages'].forEach((k, i) => {
+    present.forEach((k, i) => {
       tris += r[k].numTri();
       if (!visible[k]) return;
       const m = new THREE.Mesh(manifoldToThree(r[k].getMesh()), MATS[k]);
-      m.position.x = (i - 1) * spread;
+      m.position.x = (i - (present.length - 1) / 2) * spread;
       group.add(m);
     });
     const msGL = performance.now() - tGL;
@@ -227,9 +281,10 @@ async function regenerate() {
       `${p.width.toFixed(1)} × ${p.length.toFixed(1)} × ${p.thickness.toFixed(2)} mm\n` +
       `${tris.toLocaleString()} triangles\n` +
       `${ms.toFixed(0)} ms  (text ${msText.toFixed(0)} · csg ${msCSG.toFixed(0)} · gl ${msGL.toFixed(0)})\n` +
-      `case ${(r.case.volume()/1000).toFixed(0)} cm³  ` +
-      `cover ${(r.cover.volume()/1000).toFixed(0)} cm³  ` +
-      `pages ${(r.pages.volume()/1000).toFixed(0)} cm³`;
+      present.map((k) => `${k} ${(r[k].volume()/1000).toFixed(0)} cm³`).join('  ') +
+      (r.info.grid
+        ? `\ngridfinity ${r.info.grid.gx}×${r.info.grid.gy}×${r.info.grid.gz} units`
+        : '');
   } catch (e) {
     fail('Generation failed', e);
   }
@@ -256,16 +311,18 @@ $('dl3mf').onclick = () => {
   if (!last) return;
   const p = params();
   const parts = [];
+  const present = ORDER.filter((k) => last[k]);
   const spread = p.width + 15;
-  ['case', 'cover', 'pages'].forEach((k, i) => {
-    parts.push({ name: k, mesh: last[k].getMesh(), offset: [(i - 1) * spread, 0] });
+  present.forEach((k, i) => {
+    parts.push({ name: k, mesh: last[k].getMesh(),
+                 offset: [(i - (present.length - 1) / 2) * spread, 0] });
   });
   save(meshesTo3MF(parts), 'hidden-book.3mf', 'model/3mf');
 };
 
 $('dlstl').onclick = () => {
   if (!last) return;
-  const k = ['case', 'cover', 'pages'].find(x => visible[x]) || 'case';
+  const k = ORDER.find(x => last[x] && visible[x]) || 'case';
   save(meshToSTL(last[k].getMesh(), k), `hidden-book-${k}.stl`, 'model/stl');
 };
 
@@ -319,9 +376,11 @@ async function loadFont(url) {
 
   status('generating...');
 
-  ['width','length','thick','pitch','pdepth','etch','fsize','ssize','track']
+  ['width','length','thick','pitch','pdepth','etch','fsize','ssize','track',
+   'gx','gy','gz','gslack','gfx','gfy','gclear','ggap']
     .forEach(id => $(id).addEventListener('input', schedule));
   ['f1','f2','sp'].forEach(id => $(id).addEventListener('input', schedule));
+  ['sizemode','gfmode'].forEach(id => $(id).addEventListener('change', regenerate));
 
   window.__book = { get last() { return last; }, gen, params, regenerate, fitView };
   regenerate();

@@ -64,6 +64,62 @@ const dl = await page.evaluate(() => {
   catch (e) { return { ok: false, err: String(e) }; }
 });
 console.log('\ndebug hook:', JSON.stringify(dl));
+
+// --- gridfinity: drop-in plate, then sizing by units -----------------------
+async function settle(want, label) {
+  for (let i = 0; i < 60; i++) {
+    const h = await page.$eval('#hud', e => e.textContent);
+    if (h.includes(want)) return h;
+    await new Promise(r => setTimeout(r, 500));
+  }
+  return `(never showed ${want}) ${label}`;
+}
+
+console.log('\n=== gridfinity: drop-in plate ===');
+await page.evaluate(() => {
+  const el = document.getElementById('gfmode');
+  el.value = 'plate'; el.dispatchEvent(new Event('change', { bubbles: true }));
+});
+console.log(await settle('gridfinity', 'plate mode'));
+console.log('plate button visible:',
+  await page.evaluate(() => !document.getElementById('plateBtn').hidden));
+console.log('gridfinity hint:',
+  await page.$eval('#gfHint', e => e.textContent.trim()));
+
+console.log('\n=== gridfinity: size the book in units (4 x 4 x 5) ===');
+await page.evaluate(() => {
+  const m = document.getElementById('sizemode');
+  m.value = 'grid'; m.dispatchEvent(new Event('change', { bubbles: true }));
+  for (const [id, v] of [['gx','4'],['gy','4'],['gz','5']]) {
+    const el = document.getElementById(id);
+    el.value = v; el.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+});
+console.log(await settle('4×4×5', 'unit sizing'));
+console.log('size hint:', await page.$eval('#gridSizeHint', e => e.textContent.trim()));
+console.log('mm sliders hidden:',
+  await page.evaluate(() => document.getElementById('mmSize').hidden));
+
+const gridState = await page.evaluate(() => {
+  const r = window.__book.last;
+  return { parts: ['case','cover','pages','plate'].filter(k => r[k]),
+           grid: r.info.grid, plateTris: r.plate ? r.plate.numTri() : null };
+});
+console.log('built parts:', JSON.stringify(gridState));
+
+console.log('\n=== gridfinity: integrated ===');
+await page.evaluate(() => {
+  const el = document.getElementById('gfmode');
+  el.value = 'integrated'; el.dispatchEvent(new Event('change', { bubbles: true }));
+});
+await new Promise(r => setTimeout(r, 1200));
+console.log(await page.evaluate(() => {
+  const r = window.__book.last;
+  return `parts ${['case','cover','pages','plate'].filter(k => r[k]).join(', ')}`
+    + `  pages ${r.pages.numTri()} tris`;
+}));
+const lateErrs = await page.$eval('#err', e => e.textContent.trim());
+console.log('#err after gridfinity runs:', lateErrs || '(empty)');
 await page.screenshot({ path: '/tmp/shot.png' });
 await browser.close();
 srv.kill();

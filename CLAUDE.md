@@ -12,7 +12,7 @@ generated output or the mesh data.**
 ```bash
 npm install            # three, manifold-3d, opentype.js (also vendored)
 node serve.mjs         # http://localhost:8080 — ES modules need http, not file://
-npm test               # test.mjs + verify2.mjs, headless, no browser
+npm test               # test.mjs + verify2.mjs + gridtest.mjs, headless
 node browsertest.mjs   # real Chrome via puppeteer: boot, render, rebuild
 node dltest.mjs        # verifies .3mf / .stl downloads are well-formed
 cd tools && python3 export_data.py    # regenerate src/data.js (needs numpy)
@@ -28,6 +28,7 @@ e.g. `CHROME_PATH=/opt/pw-browsers/chromium node browsertest.mjs`.
 index.html        UI + importmap (points at ./vendor, nothing external)
 src/app.js        viewport, controls, downloads — the ONLY file touching the DOM
 src/book.js       the generator — headless, testable, no DOM
+src/gridfinity.js Gridfinity socket profile, baseplates, unit arithmetic
 src/export.js     text layout, STL writer, 3MF writer (store-only ZIP)
 src/data.js       GENERATED. base meshes + constants. 159 KB
 tools/            export_data.py, pagetex.py, extract_3mf.py, stl/
@@ -125,6 +126,50 @@ at mid-height and vanish at the ends.
 Outlines are decimated to 0.5 mm before offsetting. Corner fillets are
 tessellated down to 0.014 mm edges, and any offset larger than half such an
 edge flips it and self-intersects the polygon.
+
+## Gridfinity
+
+Numbers come from kennetek/gridfinity-rebuilt-openscad `src/core/standard.scad`
+and are restated in `gridfinity.js`. `BASE_PROFILE` is (outward offset from the
+bottom, height), so every ring is the **same 34 x 34 core square** offset by its
+radius: 35.6 at z 0, 37.2 at 0.8, 37.2 at 2.6, 41.5 at 4.75.
+
+That shared core is what makes the socket exact. Each 45 degree chamfer is a
+convex hull between its two rings, and for convex sections a hull's
+cross-section is the Minkowski average of the ends — here the core offset by
+the interpolated radius, which is the chamfer. No stair-steps, no tessellation
+dependence. Measured worst error against the spec in the built plate:
+**0.0042 mm**. Do not replace this with `extrude(..., scale)`: scaling a
+rounded rectangle scales the corner radius too, and the profile needs a
+constant-radius *offset*.
+
+Sockets cut **right through** the plate, so a bin's foot lands on the
+compartment floor. A bin of n height units then needs exactly n x 7 mm of
+depth whether or not a plate is fitted, which is what makes the thickness
+arithmetic below a single term.
+
+**The compartment is measured, never written down.** `data.js` is generated,
+so a hard-coded compartment goes stale the moment it is regenerated.
+`compartment()` slices the nominal page block once and caches it (~46 ms). One
+measurement covers every size because the compartment is a sharp-cornered
+rectangle (area error 0.0 against w x l), its walls are prismatic in z, its
+floor does not move with thickness, and its spans track width and length
+exactly 1:1 — the compartment edges *coincide* with the ends of the stretch
+bands, so `stretch1` moves each by d/2. Hence:
+
+```
+inner width = 159.982 + dx     book width     = 42*gx + slack + 25.521
+inner length = 223.939 + dy    book length    = 42*gy + slack + 15.240
+usable depth = 20.250 + dz     book thickness = 7*gz + 12.900
+```
+
+The three pads (25.521, 15.240, 12.900) are all `compartment()` reports;
+nothing else in the unit arithmetic is a constant. Thickness still only
+increases, so below 3 height units the clamp wins and the book comes out
+deeper than asked — the UI says so rather than overshooting silently.
+
+Printable ceiling on a 250 mm plate is **5 x 5 units** (6 would need 277 mm of
+width, 268 mm of length) and 9 height units at the 80 mm thickness cap.
 
 ## Text
 
