@@ -162,6 +162,25 @@ export function createGenerator(wasm) {
     return CrossSection.ofPolygons(quads, 'NonZero');
   }
 
+  /**
+   * The block's concave regions, grown enough to cover the band.
+   *
+   * The outline is not convex: between the two dovetail wings it is cut back
+   * from x -87.46 to x -79.23, leaving a notch that the case's spine engages.
+   * `offset()` grows the outline into that notch exactly the way it grows into
+   * a hole, so a plain offset lines the dovetail walls with page lines, and
+   * the levelling trim -- which removes anything outside the Z0 outline --
+   * takes the dovetail's own protrusion with it (measured 0.88 mm off its
+   * reach, x -87.407 down to -86.527).
+   *
+   * Neither belongs to the page edges. `hull() - target` is exactly the set of
+   * concavities, whatever their shape, so it needs no coordinates of its own.
+   */
+  function concaveShield(target, depth) {
+    const notch = target.hull().subtract(target);
+    return notch.isEmpty() ? null : notch.offset(depth * 2, 'Miter', 2);
+  }
+
   /** The voids in a section: fill the outer contours, subtract the section. */
   function voidsIn(xs) {
     const outer = xs.toPolygons().filter((poly) => signedArea(poly) > 0);
@@ -339,7 +358,9 @@ export function createGenerator(wasm) {
     // The inset has to clear the spine's 0.88 mm round-over: without it a ridge
     // prism reaches out to the Z0 outline at every line and re-textures the
     // round-over (measured 171 sign changes on a face that must have 1).
-    const shield = spineShield(target, depth, 1.2);
+    const spine = spineShield(target, depth, 1.2);
+    const concave = concaveShield(target, depth);
+    const shield = spine && concave ? spine.add(concave) : (spine || concave);
     const keep = (cs) => {
       const v = voidEnv ? cs.subtract(voidEnv) : cs;
       return shield ? v.subtract(shield) : v;

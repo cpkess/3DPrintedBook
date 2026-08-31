@@ -2,6 +2,7 @@ import Module from './node_modules/manifold-3d/manifold.js';
 import { createGenerator } from './src/book.js';
 const wasm = await Module(); wasm.setup();
 const gen = createGenerator(wasm);
+const { CrossSection } = wasm;
 
 function sliceY(man, y0) {
   const m = man.getMesh(), P = m.vertProperties, S = m.numProp, T = m.triVerts;
@@ -119,6 +120,32 @@ console.log('\nPAGE EDGES: every textured face the same, spine faces left alone'
       + (worstTip > 1e-4 || worstFloor > 1e-4 ? '   <-- FACES DO NOT MATCH' : '')
       + (Math.abs(dmin - DEPTH) > 1e-3 || Math.abs(dmax - DEPTH) > 1e-3 ? '   <-- WRONG DEPTH' : '')
       + (worstTurns > 8 ? '   <-- SPINE FACE TEXTURED' : ''));
+  }
+
+  // The notch between the two dovetail wings is concave, so `offset()` grows
+  // into it exactly as it grows into a hole, and the levelling trim would take
+  // the dovetail's own protrusion with it. Nothing in the texture pass may
+  // touch it: compare the material in that box, height by height.
+  const NOTCH = { w: 8.2, l: 153.6, cx: -83.35 };
+  for (const th of [33.15, 80]) {
+    const dz = th - NOM_T;
+    const bare = gen.thicken(gen.solidOf('pages', 0, 0), dz);
+    const built = gen.build({ thickness: th }).pages;
+    const box = CrossSection.square([NOTCH.w, NOTCH.l], true).translate([NOTCH.cx, 0]);
+    let worst = 0, n = 0;
+    // kept off the very ends: slicing exactly at the block's extreme height
+    // is degenerate and shows a few thousandths of a mm2 that mean nothing
+    for (let z = -11.3; z <= 11.3 + dz; z += 0.1) {
+      const a = bare.slice(z).intersect(box).area();
+      const b = built.slice(z + DROP).intersect(box).area();
+      worst = Math.max(worst, Math.abs(a - b)); n++;
+    }
+    console.log(`  dovetail notch at thickness ${th.toString().padEnd(6)} ${n} heights, `
+      + `worst area change ${worst.toFixed(6)} mm2`
+      // 0.01 mm2 is a 0.1 mm square -- below anything that prints, and 4500x
+      // smaller than the 45 mm2 the trim used to take off the dovetail. What
+      // is left is a knife-edge slice landing on a facet boundary.
+      + (worst > 0.01 ? '   <-- DOVETAIL DISTURBED' : ''));
   }
 }
 
