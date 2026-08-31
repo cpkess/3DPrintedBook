@@ -212,74 +212,88 @@ export function createGenerator(wasm) {
   }
 
   /**
-   * Regenerate the page lines over the whole block.
+   * Re-texture the page block: level its outer skin, then lay the ridges on
+   * it. Returns the finished solid.
    *
-   * ONE outline for every ridge, taken at Z0 -- the same section the inserted
-   * band is a prism of. Every ridge is then identical, at every height and at
-   * every thickness, which is the whole point: the block's own fore-edge is
-   * not a smooth curve, it wanders 0.228 mm with no trend (a best-fit
-   * parabola leaves 0.145 mm of that unexplained), and that wander is
-   * leftover erosion residual from tools/pagetex.py, not shape. Sampling the
-   * block per ridge reproduces the residual faithfully and the lines come out
-   * staggered -- the band read as a clean comb while the block's own ends
-   * read as a jumble. The wander is identical at every y (0.2281 mm at y = 0,
-   * 40, 80 and 105), so one outline is right the whole way round.
+   * THE MIDDLE'S PATTERN, EVERYWHERE. The inserted band looks right because
+   * two things there are constant: the base the grooves are cut into, and the
+   * ridges themselves. Both come from the same section, since the band is a
+   * prism of it. Everywhere else the block's own fore-edge wanders 0.228 mm
+   * with no trend -- a best-fit parabola leaves 0.145 mm of a 0.218 mm range
+   * unexplained, and the steepest run is 2.07 mm/mm -- which is leftover
+   * erosion residual from tools/pagetex.py, not shape. It is the same wander
+   * at every y (0.2281 mm at y = 0, 40, 80 and 105), so it is a radial wobble
+   * of the whole outline and one outline fixes it the whole way round.
    *
-   * This is not the "single constant outline" the old note warned against.
-   * That warning was about lines vanishing, and they do not: measured tip
-   * spread 0.0000 mm and no ridge below 0.02 mm of protrusion. What varies
-   * instead is how deep each ridge is cut into a base that still wanders,
-   * which reads as a line fading rather than a line moving.
+   * Giving every ridge the Z0 outline lines the ridge TIPS up, but the groove
+   * FLOORS are the block's own skin, so the grooves still varied from 0.022
+   * to 0.234 mm deep and the ends still did not match the middle. So the skin
+   * is levelled onto the same outline first: valleys filled, bulges trimmed,
+   * both confined to the ridge z-range and to the mask the ridges already
+   * own. After that the base and the ridges are both prisms of the Z0 section
+   * and every groove is exactly `depth`, which is what the band always was.
    *
-   * The ridge is one prism spanning the whole block, so its section has to
-   * clear every void the block has ANYWHERE, not just at Z0 -- the 0.397 mm
-   * slot only exists from the base up to z -2, and a ridge that ignored it
-   * would pinch it shut. Hence the envelope below. Over-removing is safe:
-   * the ridge is only ever unioned onto the block, so anything taken out
-   * where the block is solid is put straight back.
+   * The trim removes at most 0.16 mm of outer skin and the fill adds at most
+   * 0.06 mm. Neither touches the compartment or the 0.397 mm slot: both are
+   * voids, and `voidEnv` is subtracted from everything added.
+   *
+   * The ridge is one prism spanning the whole block, so its section must
+   * clear every void the block has ANYWHERE, not just at Z0 -- the slot only
+   * exists from the base up to z -2, and a ridge built from the Z0 voids
+   * alone would pinch it shut.
    */
-  function pageLines(solid, dz, pitch, depth, dx, dy) {
-    if (depth <= 0 || pitch <= 0) return null;
+  function pageTexture(solid, dz, pitch, depth, dx, dy) {
+    if (depth <= 0 || pitch <= 0) return solid;
     const bb = PARTS.pages.bbox;
     const lo = bb[0][2] + 0.3, hi = bb[1][2] + dz - 0.3;
     const n = Math.max(1, Math.round((hi - lo) / pitch));
     const p = (hi - lo) / n;
 
-    const base = solid.slice(Z0);
-    if (!base.numContour()) return null;
+    const at = solid.slice(Z0);
+    if (!at.numContour()) return solid;
+    const outer = at.toPolygons().filter((poly) => signedArea(poly) > 0);
+    if (!outer.length) return solid;
+    // the outline the band is a prism of, holes filled
+    const target = CrossSection.ofPolygons(outer, 'NonZero');
 
-    // Envelope of every void in the block. Sampled on the 0.5 mm table step,
-    // which is fine enough for the slot (it spans ~9.5 mm and only narrows
-    // going up, so its widest point is caught). The band is prismatic, so it
-    // contributes one sample however thick the book gets.
+    // Envelope of every void in the block, on the 0.5 mm table step. Fine
+    // enough for the slot: it spans ~9.5 mm and only narrows going up, so its
+    // widest point is caught. The band is prismatic and contributes one
+    // sample however thick the book gets.
     const step = page.tableStep;
     const stations = [Z0];
     for (let z = lo; z <= hi + 1e-9; z += step) {
       if (z > Z0 && z < Z0 + dz) continue;
-      stations.push(z > Z0 ? z - dz : z);
+      stations.push(z);
     }
     let voidEnv = null;
     for (const z of stations) {
-      const xs = solid.slice(z > Z0 ? z + dz : z);
+      const xs = solid.slice(z);
       if (!xs.numContour()) continue;
       const v = voidsIn(xs);
       if (v) voidEnv = voidEnv ? voidEnv.add(v) : v;
     }
-
-    let section = base.offset(depth, 'Miter', 2);
-    if (voidEnv) section = section.subtract(voidEnv);
+    const solidPart = (cs) => (voidEnv ? cs.subtract(voidEnv) : cs);
 
     const spineX = stretch1(page.xSpine, PARTS.pages.xb, dx);
     const mask = Manifold.cube([BIG, BIG * 2, BIG * 2], true)
       .translate([spineX + BIG / 2, 0, 0]);
+    const band = (cs) => Manifold.extrude(cs, hi - lo)
+      .translate([0, 0, lo]).intersect(mask);
 
+    // level the skin onto `target`: fill what falls short, trim what sticks out
+    const fill = band(solidPart(target));
+    const trim = band(CrossSection.square([BIG, BIG], true).subtract(target));
+    const levelled = Manifold.difference([Manifold.union([solid, fill]), trim]);
+
+    // then the ridges, one prism per line, all identical
+    const section = solidPart(target.offset(depth, 'Miter', 2));
     const ridges = [];
     for (let i = 0; i < n; i++) {
       ridges.push(Manifold.extrude(section, p / 2).translate([0, 0, lo + i * p]));
     }
-    if (!ridges.length) return null;
     // disjoint in z, so compose is exact and far cheaper than pairwise union
-    return Manifold.compose(ridges).intersect(mask);
+    return Manifold.union([levelled, Manifold.compose(ridges).intersect(mask)]);
   }
 
   /** Glyph outlines -> a cutting solid, positioned by `xform`. */
@@ -356,9 +370,8 @@ export function createGenerator(wasm) {
     coverM = engraveAll(coverM, coverCuts);
 
     // --- pages: thickened, then re-textured over the whole block
-    let pagesM = thicken(solidOf('pages', dx, dy), dz);
-    const lines = pageLines(pagesM, dz, pitch, depth, dx, dy);
-    if (lines) pagesM = pagesM.add(lines);
+    let pagesM = pageTexture(
+      thicken(solidOf('pages', dx, dy), dz), dz, pitch, depth, dx, dy);
 
     // --- gridfinity: a baseplate standing on the compartment floor.
     // Added after the page lines, so the texture pass still sees the bare
@@ -402,6 +415,6 @@ export function createGenerator(wasm) {
     };
   }
 
-  return { build, thicken, pageLines, solidOf, stretch1, cutter, engraveAll,
+  return { build, thicken, pageTexture, solidOf, stretch1, cutter, engraveAll,
            compartment, compartmentFootprint, sizeForUnits, unitsFor, gridfinity: gf };
 }

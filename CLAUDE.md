@@ -118,41 +118,51 @@ keep covering the whole block interior rather than being trimmed to a bare
 band — a band whose inner edge did not meet solid material would union in as
 a detached shell.
 
-**One outline for every ridge, taken at `Z0`** — the same section the inserted
-band is a prism of. Every ridge is then identical at every height and every
-thickness. This is not a fudge: the block's fore-edge is *not* a smooth curve.
-It wanders 0.228 mm with no trend (a best-fit parabola leaves 0.145 mm of that
-unexplained, and the steepest run is 2.07 mm/mm), and that wander is leftover
-erosion residual from `pagetex.py`, not shape. It is also identical at every y
-(0.2281 mm at y = 0, 40, 80 and 105), so one outline is right the whole way
-round.
+**The middle's pattern, everywhere.** The inserted band looks right because
+*two* things are constant there: the base the grooves are cut into, and the
+ridges themselves. Both are prisms of the `Z0` section, since the band is a
+prism of it. `pageTexture()` gives the whole block that treatment — it levels
+the outer skin onto the `Z0` outline, then lays identical ridges on it.
 
-Sampling the block per ridge reproduces that residual faithfully, and the
-lines come out staggered: measured ridge-tip spread **0.213 mm** on a 0.178 mm
-feature. The band looked like a clean comb while the block's own ends looked
-like a jumble, because the band is one slice by construction. Now: **tip
-spread 0.000000 mm**, at every thickness, and the fore-edge surface sits at
-the same x (87.3339) whatever the thickness.
+The block's own fore-edge cannot be followed, because it is not shape. It
+wanders **0.228 mm with no trend** — a best-fit parabola leaves 0.145 mm of a
+0.218 mm range unexplained, and the steepest run is 2.07 mm/mm — which is
+leftover erosion residual from `pagetex.py`. It is the same wander at every y
+(0.2281 mm at y = 0, 40, 80, 105), so it is a radial wobble of the whole
+outline and one outline corrects it the whole way round.
 
-The old warning here said a single constant outline makes lines "vanish at the
-ends". They do not — nothing drops below 0.0217 mm of protrusion. What varies
-instead is how deep each ridge is cut into a base that still wanders, which
-reads as a line fading rather than a line moving. Median depth is the
-requested 0.178; 8 of 150 ridges come out under 0.10 mm. Flattening the base
-would fix those too, but it means trimming up to 0.16 mm off the block's outer
-skin, which is a design change and is not done.
+Both halves are needed, and this took two passes to get right. Sampling the
+block per ridge reproduces the residual: ridge tips scattered over 0.213 mm on
+a 0.178 mm feature. Giving every ridge the `Z0` outline lines the *tips* up
+but leaves the groove *floors* on the raw skin, so grooves still ran 0.022 to
+0.234 mm deep and the ends still did not match the middle. Levelling the skin
+first is what closes it:
 
-**Do not chase the rest by subdividing ridges.** Lofting with k sub-slabs
-needs a real union instead of `compose` and measured 552 ms → 1517 (k=2) →
-2193 (k=3) → 3329 (k=4), converging at 0.028 mm rather than 0. `hull` is not
-available as a shortcut either: the block's outer contour is **not convex**,
-and splits into 3–5 separate islands at most heights.
+```
+tip spread    0.000000 mm    floor spread  0.000000 mm
+groove depth  0.1780 mm exactly, at 33.15 / 43.15 / 80 and at y = 0 and 80
+```
 
-Because the ridge is now one prism spanning the whole block, its section must
-clear every void the block has **anywhere**, not just at `Z0` — the 0.397 mm
-slot only exists from the base up to z −2. Hence the void envelope, sampled on
-`page.tableStep`. Over-removing is safe: ridges are only ever unioned onto the
-block, so anything taken out where the block is solid is put straight back.
+The levelling trims at most 0.16 mm of outer skin and fills at most 0.06 mm,
+both confined to the ridge z-range and to the mask the ridges already own, so
+the spine side is untouched. The block gets *narrower*, not wider (x max
+87.364 → 87.334). The compartment and the 0.397 mm slot are unaffected —
+both are voids, and `voidEnv` is subtracted from everything added. It also
+incidentally merges the page block into **one** solid at every thickness; it
+used to come apart into two at the cut plane.
+
+Because the ridge is one prism spanning the whole block, its section must
+clear every void the block has **anywhere**, not just at `Z0` — the slot only
+exists from the base up to z −2, and a ridge built from the `Z0` voids alone
+would pinch it shut. Hence the envelope, sampled on `page.tableStep`.
+Over-removing is safe: ridges are only ever unioned on, so anything taken out
+where the block is solid is put straight back.
+
+**Do not go back to following the block.** Lofting each ridge so it tracks the
+skin needs a real union instead of `compose` and measured 552 ms → 1517 (k=2)
+→ 2193 (k=3) → 3329 (k=4), converging at 0.028 mm rather than 0. `hull` is not
+a shortcut either: the outer contour is **not convex** and splits into 3–5
+separate islands at most heights.
 
 Outlines are decimated to 0.5 mm before offsetting. Corner fillets are
 tessellated down to 0.014 mm edges, and any offset larger than half such an

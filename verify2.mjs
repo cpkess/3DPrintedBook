@@ -40,7 +40,7 @@ for (const [p,d] of [[0.465,0.178],[0.8,0.25],[1.2,0.15]]) {
   console.log(`  requested depth ${d}  ->  measured peak-to-valley ${swing.toFixed(4)} mm`);
 }
 
-console.log('\nPAGE EDGES: one pattern everywhere, and unchanged by thickness');
+console.log('\nPAGE EDGES: the middle\'s pattern everywhere, at every thickness');
 {
   // x where the outline crosses y -- the fore-edge clear of the corner miter,
   // which a plain max-x would pick up instead
@@ -56,51 +56,51 @@ console.log('\nPAGE EDGES: one pattern everywhere, and unchanged by thickness');
     }
     return best;
   };
-  const NOM_T = 33.15, DROP = 11.7125, PITCH = 0.465, BB = [-11.7125, 11.7125];
+  const NOM_T = 33.15, DROP = 11.7125, PITCH = 0.465, DEPTH = 0.178;
+  const BB = [-11.7125, 11.7125];
 
-  function ridges(th, y) {
+  // Measured on the BUILT block, tip against the floor of the next groove.
+  // Comparing against the untextured block would measure the wrong thing now:
+  // the skin is levelled first, so the groove floor is no longer the bare
+  // block's surface.
+  function grooves(th, y) {
     const dz = th - NOM_T;
-    const bare = gen.thicken(gen.solidOf('pages', 0, 0), dz);
     const built = gen.build({ thickness: th }).pages;
     const lo = BB[0] + 0.3, hi = BB[1] + dz - 0.3;
     const n = Math.max(1, Math.round((hi - lo) / PITCH)), p = (hi - lo) / n;
-    const tips = [], prot = [];
-    for (let i = 0; i < n; i++) {
-      const zc = lo + i * p + p / 4;
-      const a = edgeAt(built, zc + DROP, y), b = edgeAt(bare, zc, y);
-      if (Number.isFinite(a) && Number.isFinite(b)) { tips.push(a); prot.push(a - b); }
+    const tips = [], floors = [], depths = [];
+    for (let i = 0; i < n - 1; i++) {
+      const a = edgeAt(built, lo + i * p + p / 4 + DROP, y);       // ridge
+      const b = edgeAt(built, lo + i * p + p * 0.75 + DROP, y);    // groove
+      if (Number.isFinite(a) && Number.isFinite(b)) {
+        tips.push(a); floors.push(b); depths.push(a - b);
+      }
     }
-    return { tips, prot };
+    return { tips, floors, depths };
   }
 
-  // Every ridge must reach the same outer surface -- that is what makes the
-  // block's ends read like its middle. What varies instead is how deep each
-  // one is cut into a base that still wanders by 0.228 mm of erosion residual.
-  const ref = {};
+  const sp = (v) => Math.max(...v) - Math.min(...v);
+  const surfaces = {};
   for (const th of [33.15, 43.15, 80]) {
-    let worstTip = 0, minProt = Infinity;
+    let tip = 0, floor = 0, dmin = Infinity, dmax = -Infinity, nn = 0;
     for (const y of [0, 80]) {
-      const r = ridges(th, y);
-      worstTip = Math.max(worstTip, Math.max(...r.tips) - Math.min(...r.tips));
-      minProt = Math.min(minProt, Math.min(...r.prot));
-      if (y === 0) ref[th] = r.prot.slice().sort((a, b) => a - b);
+      const g = grooves(th, y);
+      tip = Math.max(tip, sp(g.tips)); floor = Math.max(floor, sp(g.floors));
+      dmin = Math.min(dmin, ...g.depths); dmax = Math.max(dmax, ...g.depths);
+      nn = g.depths.length;
+      if (y === 0) surfaces[th] = g.tips[0];
     }
-    console.log(`  thickness ${th.toString().padEnd(6)} tip spread ${worstTip.toFixed(6)} mm`
-      + `   shallowest ridge ${minProt.toFixed(4)} mm`
-      + (worstTip > 1e-4 ? '   <-- RIDGES NOT ALIGNED' : '')
-      + (minProt <= 0 ? '   <-- RIDGES VANISHING' : ''));
+    console.log(`  thickness ${th.toString().padEnd(6)} ${nn} grooves  `
+      + `tip spread ${tip.toFixed(6)}  floor spread ${floor.toFixed(6)}  `
+      + `depth ${dmin.toFixed(4)}..${dmax.toFixed(4)} (want ${DEPTH})`
+      + (tip > 1e-4 || floor > 1e-4 ? '   <-- ENDS DO NOT MATCH THE MIDDLE' : '')
+      + (Math.abs(dmin - DEPTH) > 1e-3 || Math.abs(dmax - DEPTH) > 1e-3
+          ? '   <-- WRONG DEPTH' : ''));
   }
-
-  // and the outer surface those ridges reach must not move when thickness
-  // does. Comparing the *set of depths* instead would be meaningless: the
-  // pitch is re-fitted per thickness (n is rounded so ridges land on both
-  // block ends), so ridges sample the wandering base at different heights
-  // and the depths legitimately differ. Where the tips land does not.
   for (const th of [43.15, 80]) {
-    const a = ridges(th, 0).tips[0], b = ridges(33.15, 0).tips[0];
-    console.log(`  fore-edge surface at ${th} vs nominal: x ${a.toFixed(4)} vs `
-      + `${b.toFixed(4)}, shift ${Math.abs(a - b).toFixed(6)} mm`
-      + (Math.abs(a - b) > 1e-4 ? '   <-- SURFACE MOVED' : ''));
+    const d = Math.abs(surfaces[th] - surfaces[33.15]);
+    console.log(`  fore-edge surface at ${th} vs nominal: shift ${d.toFixed(6)} mm`
+      + (d > 1e-4 ? '   <-- SURFACE MOVED' : ''));
   }
 }
 
