@@ -158,6 +158,44 @@ would pinch it shut. Hence the envelope, sampled on `page.tableStep`.
 Over-removing is safe: ridges are only ever unioned on, so anything taken out
 where the block is solid is put straight back.
 
+**The mask is per-edge, not a half-space.** The block is not a rectangle in
+plan: it steps at |y| = 76.82, reaching x −87.46 only in two **wings** — the
+sections carrying the dovetail — and is cut back to x −79.23 between them. The
+old mask was a half-space at `page.xSpine` (−76), which cleared the wings'
+spine face but took 11.5 mm of the head and tail faces with it at each end.
+The designer textures those: of the 729 head-face triangles in the source
+mesh, 236 span the full 174 mm width, and sampled over the wing at x −85 they
+swing 0.3810 mm with 76 sign changes — the same as the fore-edge.
+
+Both spine faces must still be left alone. The wings' one carries a 0.88 mm
+round-over (1 sign change: a curve, not lines) and the inner one faces the
+hinge. So `spineShield()` builds a strip per edge instead, on any edge whose
+outward normal points within 45° of −x:
+
+- `reach = depth * 2` **outside** the outline, to clear the band.
+- `inset = 1.2` **inside** it. Without this a ridge prism reaches out to the
+  Z0 outline at every line and re-textures the round-over — measured 171 sign
+  changes on a face that must have 1.
+- overrun `depth * 1.5` along the edge, past both ends. The mitre tip reaches
+  exactly `depth` along the neighbouring edge, so stopping short leaves a
+  0.178 mm spike past the spine face, and stopping *exactly* on it makes the
+  two boundaries coincide and leaves a degenerate sliver at every line
+  (315 stray shells at thickness 80 against 14).
+
+**Decimate the target before offsetting.** The raw Z0 slice carries 24
+sub-0.5 mm edges of pure tessellation noise out of 50. `simplify(0.001)` takes
+it to 15 points for a worst deviation of 0.00095 mm, and since every ridge is
+a prism of that section it is the difference between ~320 and ~100 triangles
+per line — 77k triangles and 2545 ms at thickness 80, against 34k and 1093.
+
+**Probe every textured face, not just the fore-edge.** That is exactly how the
+wings were missed. `verify2.mjs` now measures the fore-edge, the head at two
+x positions, and the head *and* tail over the wings, plus both spine faces.
+When checking a spine face is still smooth, count only turns bigger than
+5 microns: a flat prism face slices with about **7 nanometres** of
+floating-point jitter, which is hundreds of meaningless sign changes over a
+tall block.
+
 **Do not go back to following the block.** Lofting each ridge so it tracks the
 skin needs a real union instead of `compose` and measured 552 ms → 1517 (k=2)
 → 2193 (k=3) → 3329 (k=4), converging at 0.028 mm rather than 0. `hull` is not

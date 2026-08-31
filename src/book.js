@@ -105,6 +105,63 @@ export function createGenerator(wasm) {
     return a / 2;
   };
 
+  /**
+   * The region where page lines must NOT go: a strip along every spine-facing
+   * edge of the outline.
+   *
+   * The old mask was a half-space at `page.xSpine` (-76), which threw away far
+   * more than the spine. The block is not a plain rectangle in plan: it steps
+   * at |y| = 76.82, reaching x -87.46 only in two wings (the sections that
+   * carry the dovetail) and cut back to x -79.23 between them. A half-space
+   * that clears the wings' spine face also clears 11.5 mm of the head and tail
+   * faces at each end -- exactly the stretch that sits on the wings. The
+   * designer textures those: of the 729 head-face triangles in the source
+   * mesh, 236 span the full 174 mm width, and sampled over the wing at x -85
+   * they swing 0.3810 mm with 76 sign changes, the same as the fore-edge.
+   *
+   * Both spine faces must still be left alone -- the wings' one carries a
+   * 0.53 mm round-over (1 sign change: a curve, not lines), and the inner one
+   * faces the hinge. So the shield is built per edge instead: any edge whose
+   * outward normal points within 45 degrees of -x gets a strip, reaching
+   * `depth * 2` outside the outline to clear the band and `inset` inside it so
+   * the levelling cannot square the round-over off. Each strip is bounded by
+   * its own edge, so it stops at the corner and leaves the head and tail bands
+   * running the whole way to it.
+   */
+  function spineShield(target, depth, inset = 1.5) {
+    const reach = depth * 2;
+    const quads = [];
+    for (const poly of target.toPolygons()) {
+      const N = poly.length;
+      const out = signedArea(poly) > 0 ? 1 : -1;
+      for (let i = 0; i < N; i++) {
+        const a = poly[i], b = poly[(i + 1) % N];
+        const ex = b[0] - a[0], ey = b[1] - a[1];
+        const L = Math.hypot(ex, ey);
+        if (L < 1e-6) continue;
+        const nx = out * ey / L, ny = -out * ex / L;
+        if (nx > -0.7) continue;                      // not spine-facing
+        // Run past each end by half a ridge more than `depth`, which is how
+        // far the mitred corner of the offset reaches along the neighbouring
+        // edge. Less and a spike pokes out past the spine face; landing
+        // exactly on the mitre tip makes the two boundaries coincide and
+        // leaves a degenerate sliver behind at every line.
+        const over = depth * 1.5;
+        const tx = ex / L * over, ty = ey / L * over;
+        const a0 = [a[0] - tx, a[1] - ty], b0 = [b[0] + tx, b[1] + ty];
+        const q = [
+          [a0[0] - nx * inset, a0[1] - ny * inset],
+          [b0[0] - nx * inset, b0[1] - ny * inset],
+          [b0[0] + nx * reach, b0[1] + ny * reach],
+          [a0[0] + nx * reach, a0[1] + ny * reach],
+        ];
+        quads.push(signedArea(q) > 0 ? q : q.slice().reverse());
+      }
+    }
+    if (!quads.length) return null;
+    return CrossSection.ofPolygons(quads, 'NonZero');
+  }
+
   /** The voids in a section: fill the outer contours, subtract the section. */
   function voidsIn(xs) {
     const outer = xs.toPolygons().filter((poly) => signedArea(poly) > 0);
@@ -253,8 +310,14 @@ export function createGenerator(wasm) {
     if (!at.numContour()) return solid;
     const outer = at.toPolygons().filter((poly) => signedArea(poly) > 0);
     if (!outer.length) return solid;
-    // the outline the band is a prism of, holes filled
-    const target = CrossSection.ofPolygons(outer, 'NonZero');
+    // The outline the band is a prism of, holes filled and decimated. The raw
+    // slice carries 24 sub-0.5 mm edges of pure tessellation noise out of 50;
+    // dropping them takes the section to 15 points for a worst deviation of
+    // 0.00095 mm, and every ridge is a prism of this section, so it is the
+    // difference between ~320 and ~100 triangles per line.
+    const target = CrossSection
+      .ofPolygons(outer, 'NonZero')
+      .simplify(0.001);
 
     // Envelope of every void in the block, on the 0.5 mm table step. Fine
     // enough for the slot: it spans ~9.5 mm and only narrows going up, so its
@@ -273,27 +336,29 @@ export function createGenerator(wasm) {
       const v = voidsIn(xs);
       if (v) voidEnv = voidEnv ? voidEnv.add(v) : v;
     }
-    const solidPart = (cs) => (voidEnv ? cs.subtract(voidEnv) : cs);
-
-    const spineX = stretch1(page.xSpine, PARTS.pages.xb, dx);
-    const mask = Manifold.cube([BIG, BIG * 2, BIG * 2], true)
-      .translate([spineX + BIG / 2, 0, 0]);
-    const band = (cs) => Manifold.extrude(cs, hi - lo)
-      .translate([0, 0, lo]).intersect(mask);
+    // The inset has to clear the spine's 0.88 mm round-over: without it a ridge
+    // prism reaches out to the Z0 outline at every line and re-textures the
+    // round-over (measured 171 sign changes on a face that must have 1).
+    const shield = spineShield(target, depth, 1.2);
+    const keep = (cs) => {
+      const v = voidEnv ? cs.subtract(voidEnv) : cs;
+      return shield ? v.subtract(shield) : v;
+    };
+    const band = (cs) => Manifold.extrude(cs, hi - lo).translate([0, 0, lo]);
 
     // level the skin onto `target`: fill what falls short, trim what sticks out
-    const fill = band(solidPart(target));
-    const trim = band(CrossSection.square([BIG, BIG], true).subtract(target));
+    const fill = band(keep(target));
+    const trim = band(keep(CrossSection.square([BIG, BIG], true).subtract(target)));
     const levelled = Manifold.difference([Manifold.union([solid, fill]), trim]);
 
     // then the ridges, one prism per line, all identical
-    const section = solidPart(target.offset(depth, 'Miter', 2));
+    const section = keep(target.offset(depth, 'Miter', 2));
     const ridges = [];
     for (let i = 0; i < n; i++) {
       ridges.push(Manifold.extrude(section, p / 2).translate([0, 0, lo + i * p]));
     }
     // disjoint in z, so compose is exact and far cheaper than pairwise union
-    return Manifold.union([levelled, Manifold.compose(ridges).intersect(mask)]);
+    return Manifold.union([levelled, Manifold.compose(ridges)]);
   }
 
   /** Glyph outlines -> a cutting solid, positioned by `xform`. */
