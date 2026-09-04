@@ -96,6 +96,20 @@ Strokes are ignored — only filled area becomes geometry, which is what an
 engraving is. It has no DOM dependency, so uploads are checked headless in
 `decaltest.mjs`.
 
+## Colour inlay
+
+Optionally, the engraved volume — front and spine titles, and the spine panel
+— comes out as its own object in the `.3mf`, sitting exactly in the recess it
+was cut from, for a second filament in a multi-material slicer.
+
+The fit is flush by construction: it is the difference between the body
+before and after engraving, so case + inlay measures the same volume as the
+un-engraved body, with 0.000000 mm³ of gap, proud or overlap. The inlay
+shares its parent's position in the file rather than being laid out beside
+it, which `dltest.mjs` verifies by reading the exported `.3mf` back.
+
+Turning it on does not change the parts themselves.
+
 ## How the geometry works
 
 **Width and length — feature-preserving stretch.** Each part has a band along

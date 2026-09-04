@@ -295,6 +295,31 @@ nonzero artwork does not have. Strokes are ignored: only filled area is
 geometry. y is flipped on the way out, which reverses every ring together and
 so leaves outer-vs-hole winding intact.
 
+## Colour inlay
+
+`inlay: true` returns two extra parts, `caseInlay` and `coverInlay`: the
+volume the engravings removed, for printing in a second filament.
+
+It is one subtraction, not a re-run of the cutters —
+`caseBase - caseM`, where `caseBase` is the case with the moulded panel
+*filled*. That means the moulded decal's own recess is inlaid too, and the
+same line covers all three decal modes with no special-casing.
+
+Fit is flush by construction rather than by tuning. The cutters stand
+`text.proud` (0.05 mm) above the surface, and the subtraction clips that off
+against the real body. Measured on the built parts: case + inlay has the same
+volume as the un-engraved body to 1e-6 mm³, with **0.000000 mm³** of gap,
+proud and overlap.
+
+**The inlays must not be laid out beside their parent.** They belong in the
+recess they came from, so in `app.js` they share the parent's `SLOT` and
+therefore its offset — `dltest.mjs` reads the exported `.3mf` back and checks
+`caseInlay`'s build transform equals `case`'s. Spread apart, the file is
+useless for multi-material.
+
+Asking for an inlay never changes the parts themselves, so leaving it off
+prints exactly as before; that is asserted too.
+
 ## Known limits
 
 - **Cover hinge zone is fixed at 22 mm** (x −88.66 … −66.66) with no prismatic

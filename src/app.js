@@ -80,9 +80,15 @@ const MATS = {
   cover: new THREE.MeshStandardMaterial({ color: 0x9c6a3d, roughness: .78, metalness: .04 }),
   pages: new THREE.MeshStandardMaterial({ color: 0xd9cfb6, roughness: .92, metalness: 0 }),
   plate: new THREE.MeshStandardMaterial({ color: 0x7fa66a, roughness: .7, metalness: .05 }),
+  caseInlay: new THREE.MeshStandardMaterial({ color: 0x2b2f3a, roughness: .55, metalness: .1 }),
+  coverInlay: new THREE.MeshStandardMaterial({ color: 0x2b2f3a, roughness: .55, metalness: .1 }),
 };
-// case | cover | pages | plate -- `plate` only exists in drop-in mode
-const ORDER = ['case', 'cover', 'pages', 'plate'];
+// case | cover | pages | plate -- `plate` only exists in drop-in mode.
+// The inlays are not laid out beside their parent: they belong in the recess
+// they came from, so they share its slot and its offset in the .3mf.
+const ORDER = ['case', 'cover', 'pages', 'plate', 'caseInlay', 'coverInlay'];
+const SLOT = { case: 0, cover: 1, pages: 2, plate: 3, caseInlay: 0, coverInlay: 1 };
+const isInlay = (k) => k.endsWith('Inlay');
 const group = new THREE.Group();
 scene.add(group);
 
@@ -137,7 +143,7 @@ let gen = null;
 let font = null;
 let decalArt = null;   // { polys, view, name } from the uploaded SVG
 let last = null;
-const visible = { case: true, cover: true, pages: true, plate: true };
+const visible = { case: true, cover: true, pages: true, plate: true, inlay: true };
 let queued = false, running = false;
 
 const num = (id) => parseFloat($(id).value);
@@ -158,6 +164,7 @@ function params() {
     f1: $('f1').value, f2: $('f2').value, sp: $('sp').value,
     fsize: num('fsize'), ssize: num('ssize'), track: num('track'),
     gfMode: $('gfmode').value,
+    inlayMode: $('inlaymode').value,
     decalMode: $('decalmode').value,
     decalFit: num('decalfit'), decalDepth: num('decaldepth'),
     gfx: num('gfx'), gfy: num('gfy'),
@@ -172,6 +179,14 @@ function decalShapesFor(p) {
   const d = gen.DECAL;
   const polys = fitPolygons(decalArt.polys, decalArt.view, d.w, d.h, p.decalFit);
   return polys.length ? polys : null;
+}
+
+const shown = (k) => (isInlay(k) ? visible.inlay : visible[k]);
+
+/** x offset per part: one slot per printable body, inlays riding along. */
+function layout(present, spread) {
+  const slots = [...new Set(present.map((k) => SLOT[k]))].sort((a, b) => a - b);
+  return (k) => (slots.indexOf(SLOT[k]) - (slots.length - 1) / 2) * spread;
 }
 
 function shapesFor(str, size, track) {
@@ -195,6 +210,9 @@ function updateReadouts(p) {
   $('vgfy').textContent = p.gfy ? p.gfy.toFixed(0) : 'auto';
   $('vgc').textContent = p.gclear.toFixed(2);
   $('vgg').textContent = p.ggap.toFixed(2);
+  $('inlayHint').textContent = p.inlayMode === 'on'
+    ? 'Engraved volume exported as its own object, in place.'
+    : 'Engravings stay as recesses in the parts.';
   $('vdf').textContent = p.decalFit.toFixed(2);
   $('vdd').textContent = p.decalDepth.toFixed(3);
   $('decalHint').innerHTML = p.decalMode === 'original'
@@ -275,6 +293,7 @@ async function regenerate() {
       width: p.width, length: p.length, thickness: p.thickness,
       pagePitch: p.pagePitch, pageDepth: p.pageDepth, etchDepth: p.etchDepth,
       gridfinity: p.gfMode,
+      inlay: p.inlayMode === 'on',
       spineDecal: p.decalMode,
       decalShapes: decalShapesFor(p),
       decalDepth: p.decalDepth,
@@ -292,12 +311,14 @@ async function regenerate() {
     let tris = 0;
     const present = ORDER.filter((k) => r[k]);
     $('plateBtn').hidden = !r.plate;
+    $('inlayBtn').hidden = !(r.caseInlay || r.coverInlay);
     const spread = p.width + 15;
-    present.forEach((k, i) => {
+    const offsetX = layout(present, spread);
+    present.forEach((k) => {
       tris += r[k].numTri();
-      if (!visible[k]) return;
+      if (!shown(k)) return;
       const m = new THREE.Mesh(manifoldToThree(r[k].getMesh()), MATS[k]);
-      m.position.x = (i - (present.length - 1) / 2) * spread;
+      m.position.x = offsetX(k);
       group.add(m);
     });
     const msGL = performance.now() - tGL;
@@ -307,7 +328,11 @@ async function regenerate() {
       `${p.width.toFixed(1)} × ${p.length.toFixed(1)} × ${p.thickness.toFixed(2)} mm\n` +
       `${tris.toLocaleString()} triangles\n` +
       `${ms.toFixed(0)} ms  (text ${msText.toFixed(0)} · csg ${msCSG.toFixed(0)} · gl ${msGL.toFixed(0)})\n` +
-      present.map((k) => `${k} ${(r[k].volume()/1000).toFixed(0)} cm³`).join('  ') +
+      present.filter((k) => !isInlay(k))
+        .map((k) => `${k} ${(r[k].volume()/1000).toFixed(0)} cm³`).join('  ') +
+      (r.caseInlay || r.coverInlay
+        ? `\ninlay ${(((r.caseInlay?.volume() ?? 0) + (r.coverInlay?.volume() ?? 0))/1000).toFixed(2)} cm³`
+        : '') +
       (r.info.grid
         ? `\ngridfinity ${r.info.grid.gx}×${r.info.grid.gy}×${r.info.grid.gz} units`
         : '');
@@ -339,16 +364,16 @@ $('dl3mf').onclick = () => {
   const parts = [];
   const present = ORDER.filter((k) => last[k]);
   const spread = p.width + 15;
-  present.forEach((k, i) => {
-    parts.push({ name: k, mesh: last[k].getMesh(),
-                 offset: [(i - (present.length - 1) / 2) * spread, 0] });
+  const offsetX = layout(present, spread);
+  present.forEach((k) => {
+    parts.push({ name: k, mesh: last[k].getMesh(), offset: [offsetX(k), 0] });
   });
   save(meshesTo3MF(parts), 'hidden-book.3mf', 'model/3mf');
 };
 
 $('dlstl').onclick = () => {
   if (!last) return;
-  const k = ORDER.find(x => last[x] && visible[x]) || 'case';
+  const k = ORDER.find(x => last[x] && shown(x)) || 'case';
   save(meshToSTL(last[k].getMesh(), k), `hidden-book-${k}.stl`, 'model/stl');
 };
 
@@ -406,7 +431,8 @@ async function loadFont(url) {
    'gx','gy','gz','gslack','gfx','gfy','gclear','ggap','decalfit','decaldepth']
     .forEach(id => $(id).addEventListener('input', schedule));
   ['f1','f2','sp'].forEach(id => $(id).addEventListener('input', schedule));
-  ['sizemode','gfmode','decalmode'].forEach(id => $(id).addEventListener('change', regenerate));
+  ['sizemode','gfmode','decalmode','inlaymode']
+    .forEach(id => $(id).addEventListener('change', regenerate));
 
   $('decalFile').onchange = async (e) => {
     const f = e.target.files[0];

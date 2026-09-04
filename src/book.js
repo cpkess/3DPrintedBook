@@ -483,10 +483,18 @@ export function createGenerator(wasm) {
     const tol = o.textTolerance ?? 0.01;
     let caseM = thicken(solidOf('case', dx, dy), dz);
 
-    // The decal comes first: filling it must not paste over an engraving.
+    // An inlay is exactly the material the engravings took out, so it is
+    // measured against a case with the moulded panel FILLED. That way the
+    // moulded recess is inlaid too and not just what we cut ourselves, and
+    // one subtraction covers every decal mode without special-casing.
+    const wantInlay = o.inlay === true;
     const decalMode = o.spineDecal ?? 'original';
+    const caseBase = (wantInlay || decalMode !== 'original')
+      ? fillDecal(caseM, dx, dy, dz) : caseM;
+
+    // The decal comes first: filling it must not paste over an engraving.
     if (decalMode !== 'original') {
-      caseM = fillDecal(caseM, dx, dy, dz);
+      caseM = caseBase;
       if (decalMode === 'svg' && o.decalShapes && o.decalShapes.length) {
         caseM = engraveAll(caseM, [cutter(
           o.decalShapes, decalMatrix(dx, dy, dz),
@@ -512,7 +520,8 @@ export function createGenerator(wasm) {
     }
 
     // --- cover: thickness is panel stock, so it is not split
-    let coverM = solidOf('cover', dx, dy);
+    const coverBase = solidOf('cover', dx, dy);
+    let coverM = coverBase;
     const coverCuts = [];
     for (const [key, anchor] of [['front1Shapes', text.front1],
                                  ['front2Shapes', text.front2]]) {
@@ -561,9 +570,22 @@ export function createGenerator(wasm) {
       };
     }
 
+    // The inlays: what `caseBase` / `coverBase` have and the finished parts
+    // do not. Flush by construction -- the cutters stand `text.proud` above
+    // the surface, and intersecting with the solid clips that off.
+    const inlayOf = (base, done) => {
+      if (!wantInlay) return null;
+      const v = Manifold.difference([base, done]);
+      return v.isEmpty() ? null : v;
+    };
+    const caseInlay = inlayOf(caseBase, caseM);
+    const coverInlay = inlayOf(coverBase, coverM);
+
     return {
       case: caseM.translate([0, 0, drop.case]),
       cover: coverM.translate([0, 0, drop.cover]),
+      caseInlay: caseInlay ? caseInlay.translate([0, 0, drop.case]) : null,
+      coverInlay: coverInlay ? coverInlay.translate([0, 0, drop.cover]) : null,
       pages: pagesM.translate([0, 0, drop.pages]),
       // present only when a separate drop-in plate was asked for
       plate: plateM ? plateM.translate([0, 0, drop.pages]) : null,

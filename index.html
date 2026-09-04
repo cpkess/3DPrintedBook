@@ -161,6 +161,22 @@
       <div class="hint" id="fitHint"></div>
     </div></details>
 
+    <details><summary>Colour inlay</summary><div class="body">
+      <div class="row"><label>Second-filament inlay</label>
+        <select id="inlaymode">
+          <option value="off">off</option>
+          <option value="on">separate parts for the engraving</option>
+        </select></div>
+      <div class="hint" id="inlayHint"></div>
+      <div class="hint">Exports the engraved volume — front and spine titles
+        and the spine panel — as its own object in the .3mf, sitting exactly
+        in the recess it came out of. Load it into a multi-material slicer and
+        assign the second filament to it. The fit is flush by construction:
+        case&nbsp;+&nbsp;inlay measures the same volume as the un-engraved
+        part. Nothing changes about the parts themselves, so leaving this off
+        prints exactly as before.</div>
+    </div></details>
+
     <details><summary>Spine decal</summary><div class="body">
       <div class="row"><label>Panel</label>
         <select id="decalmode">
@@ -208,6 +224,7 @@
     <button data-p="cover" class="on">Cover</button>
     <button data-p="pages" class="on">Pages</button>
     <button data-p="plate" class="on" id="plateBtn" hidden>Plate</button>
+    <button data-p="inlay" class="on" id="inlayBtn" hidden>Inlay</button>
   </div>
   <div id="busy">generating…</div>
 </div>

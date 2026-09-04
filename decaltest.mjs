@@ -107,5 +107,42 @@ console.log('\nSVG fill rules survive the trip into geometry:');
     `nonzero same-wound: centre ${nz.mid.toFixed(4)} mm (want ~${D.depth}, solid)`);
 }
 
-console.log(fail ? `\n${fail} FAILURES` : '\nall decal checks passed');
+// --- colour inlay ---------------------------------------------------------
+console.log('\ncolour inlay exactly fills what the engraving removed:');
+{
+  const line = [[[-25, -4], [25, -4], [25, 4], [-25, 4]]];   // a stand-in glyph
+  const art = svgPolygons('<svg viewBox="0 0 100 100"><path fill-rule="evenodd" '
+    + 'd="M8 8 H92 V92 H8 Z M28 28 H72 V72 H28 Z"/></svg>');
+  const dec = fitPolygons(art.polys, art.view, D.w, D.h, 0.85);
+
+  const cases = [
+    ['moulded panel + both titles', { spineShapes: line, front1Shapes: line }],
+    ['svg panel + both titles', { spineDecal: 'svg', decalShapes: dec,
+                                  spineShapes: line, front1Shapes: line }],
+    ['filled panel, spine title only', { spineDecal: 'none', spineShapes: line }],
+  ];
+  for (const [lab, o] of cases) {
+    const r = gen.build({ ...o, inlay: true });
+    const plain = gen.build(o);
+    // an inlay must not overlap its parent, must not stand proud of the
+    // un-engraved body, and must leave no gap
+    const ref = gen.build({ spineDecal: 'none' }).case;   // panel filled, nothing cut
+    const joined = r.case.add(r.caseInlay);
+    const gap = ref.subtract(joined).volume();
+    const proud = joined.subtract(ref).volume();
+    const clash = r.case.intersect(r.caseInlay).volume();
+    check(Math.abs(gap) < 1e-3 && Math.abs(proud) < 1e-3 && clash < 1e-2,
+      `${lab}: inlay ${r.caseInlay.volume().toFixed(1)} mm3, `
+      + `gap ${gap.toFixed(6)}, proud ${proud.toFixed(6)}, overlap ${clash.toFixed(6)} mm3`);
+    check(plain.case.volume() === r.case.volume(),
+      `${lab}: asking for an inlay does not change the part itself`);
+  }
+  const none = gen.build({ spineDecal: 'none', inlay: true });
+  check(none.caseInlay === null && none.coverInlay === null,
+    'nothing engraved -> no inlay parts at all');
+  const off = gen.build({ spineShapes: line });
+  check(off.caseInlay === null, 'inlay off by default');
+}
+
+console.log(fail ? `\n${fail} FAILURES` : '\nall decal + inlay checks passed');
 process.exit(fail ? 1 : 0);
